@@ -1,0 +1,20 @@
+# Build output
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Local environment and secrets (commit only .env.example with fake values)
+.env
+.env.*
+.env.example
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+#documents
+docs/
