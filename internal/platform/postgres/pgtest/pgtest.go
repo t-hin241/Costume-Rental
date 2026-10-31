@@ -2,7 +2,8 @@
 // database. Set TEST_DATABASE_URL (environment or the repository's .env,
 // which is git-ignored) to a postgres:// URL of a role allowed to CREATE
 // DATABASE. Each test package gets its own database, migrated from scratch
-// and dropped afterwards; without the variable the tests are skipped.
+// and dropped afterwards; without the variable the tests are skipped, except
+// under CI, where that fails the run.
 package pgtest
 
 import (
@@ -39,6 +40,11 @@ var (
 func Run(m *testing.M, seed func(ctx context.Context, p *pgxpool.Pool) error) int {
 	base := lookupDSN()
 	if base == "" {
+		// A skipped package still reports ok, which would hide a broken CI setup.
+		if os.Getenv("CI") != "" {
+			fmt.Fprintln(os.Stderr, "pgtest:", envVar, "is required when CI is set")
+			return 1
+		}
 		skipMsg = envVar + " is not set; integration tests skipped"
 		return m.Run()
 	}
@@ -128,7 +134,14 @@ func createDatabase(ctx context.Context, base string) (string, func(), error) {
 		return "", nil, fmt.Errorf("create test database (the role needs CREATEDB): %w", err)
 	}
 	drop := func() {
-		if _, err := admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)"); err != nil {
+		// DROP ... WITH (FORCE) fails on autovacuum workers for a role with only
+		// CREATEDB, so end this role's sessions first and let DROP stop the workers.
+		_, err := admin.Exec(context.Background(),
+			`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND usename = current_user`, name)
+		if err == nil {
+			_, err = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "pgtest: drop", name, err)
 		}
 		admin.Close(context.Background())

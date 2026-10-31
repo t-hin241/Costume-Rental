@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.15-alpine3.24
+        env:
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Throwaway credentials of the service container above, not a real secret.
+      TEST_DATABASE_URL: postgres://webee_ci:ci-only-not-a-secret@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # pgtest needs CREATEDB only; a superuser would hide missing privileges.
+      - name: Create the test role
+        run: >-
+          docker exec "${{ job.services.postgres.id }}"
+          psql -X -v ON_ERROR_STOP=1 -U postgres
+          -c "CREATE ROLE webee_ci LOGIN CREATEDB NOSUPERUSER PASSWORD 'ci-only-not-a-secret'"
+      - name: Test with the race detector
+        run: go test -race -count=1 ./...

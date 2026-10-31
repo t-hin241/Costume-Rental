@@ -1,11 +1,13 @@
 module webee_rentor
 
-go 1.25.0
+go 1.27.0
+
+toolchain go1.27.3
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/jackc/pgx/v5 v5.9.2
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 )
 
 require (
