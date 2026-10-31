@@ -54,6 +54,37 @@ func TestResolveScheduleRejectsClosedOrInvalidChoices(t *testing.T) {
 	}
 }
 
+func TestRecurringClosureAppliesEveryYear(t *testing.T) {
+	cal := calendar(t)
+	xmas, err := businesstime.ParseMonthDay("12-25")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cal.SetRecurringClosures([]businesstime.MonthDay{xmas}); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"2026-12-25", "2027-12-25"} {
+		if _, err := cal.ResolveSchedule(date(t, d), "morning", day); !errors.Is(err, rentals.ErrStoreClosed) {
+			t.Errorf("pickup on %s: err = %v", d, err)
+		}
+	}
+	if _, err := cal.ResolveSchedule(date(t, "2026-12-24"), "morning", day); !errors.Is(err, rentals.ErrReturnOutsideSlots) {
+		t.Errorf("due on the closure: err = %v", err)
+	}
+	if _, err := cal.ResolveFulfillment(date(t, "2026-12-25"), rentals.LegCourier, "mid", day, rentals.LegCourier); !errors.Is(err, rentals.ErrStoreClosed) {
+		t.Errorf("courier delivery on the closure: err = %v", err)
+	}
+	if _, err := cal.ResolveFulfillment(date(t, "2026-12-24"), rentals.LegCourier, "mid", day, rentals.LegCourier); !errors.Is(err, rentals.ErrNoDeliveryWindow) {
+		t.Errorf("courier pickup on the closure: err = %v", err)
+	}
+	if _, err := cal.ResolveSchedule(date(t, "2026-12-22"), "morning", day); err != nil {
+		t.Errorf("other dates stay open: %v", err)
+	}
+	if err := cal.SetRecurringClosures([]businesstime.MonthDay{{Month: 2, Day: 30}}); !errors.Is(err, businesstime.ErrInvalidMonthDay) {
+		t.Errorf("impossible date: err = %v", err)
+	}
+}
+
 // With a DST zone, adding an exact package duration shifts the local wall
 // time; the calendar rejects it instead of silently drifting. Asia/Ho_Chi_Minh
 // has no DST, so this guards configuration mistakes.

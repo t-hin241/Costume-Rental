@@ -116,7 +116,7 @@ func (c *StoreCalendar) ResolveFulfillment(date businesstime.Date, outbound LegM
 	if !date.Valid() {
 		return Schedule{}, businesstime.ErrInvalidDate
 	}
-	if c.closed[date] {
+	if c.isClosed(date) {
 		return Schedule{}, fmt.Errorf("pickup %s: %w", date, ErrStoreClosed)
 	}
 	var start time.Time
@@ -178,7 +178,7 @@ func (c *StoreCalendar) ValidateFulfillment(s Schedule, outbound, ret LegMode) (
 
 func (c *StoreCalendar) windowEndingAt(t time.Time) (period.Range, bool) {
 	d := businesstime.DateOf(t, c.loc)
-	if c.closed[d] {
+	if c.isClosed(d) {
 		return period.Range{}, false
 	}
 	tod, exact := businesstime.TimeOfDayOf(t, c.loc)

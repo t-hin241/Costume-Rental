@@ -18,6 +18,7 @@ const LocationName = "Asia/Ho_Chi_Minh"
 
 var (
 	ErrInvalidDate      = domainerr.New(domainerr.KindInvalid, "businesstime.invalid_date", "date must be a real calendar date in YYYY-MM-DD form")
+	ErrInvalidMonthDay  = domainerr.New(domainerr.KindInvalid, "businesstime.invalid_month_day", "date must be a real calendar day in MM-DD form")
 	ErrInvalidTimeOfDay = domainerr.New(domainerr.KindInvalid, "businesstime.invalid_time_of_day", "time of day must be HH:MM between 00:00 and 23:59")
 )
 
@@ -57,8 +58,39 @@ func (d Date) Weekday() time.Weekday {
 	return time.Date(d.Year, d.Month, d.Day, 0, 0, 0, 0, time.UTC).Weekday()
 }
 
+// MonthDay returns the yearly date of d.
+func (d Date) MonthDay() MonthDay { return MonthDay{Month: d.Month, Day: d.Day} }
+
 func (d Date) String() string {
 	return fmt.Sprintf("%04d-%02d-%02d", d.Year, d.Month, d.Day)
+}
+
+// MonthDay is a date that repeats every year, such as a solar public holiday.
+// 02-29 is allowed and only occurs in leap years.
+type MonthDay struct {
+	Month time.Month
+	Day   int
+}
+
+// leapYear makes 02-29 a real day when validating a MonthDay.
+const leapYear = 2024
+
+// ParseMonthDay parses MM-DD and rejects days no year has, such as 02-30.
+func ParseMonthDay(s string) (MonthDay, error) {
+	t, err := time.Parse(time.DateOnly, fmt.Sprintf("%d-%s", leapYear, s))
+	if err != nil {
+		return MonthDay{}, fmt.Errorf("parse month-day %q: %w", s, ErrInvalidMonthDay)
+	}
+	return MonthDay{Month: t.Month(), Day: t.Day()}, nil
+}
+
+// Valid reports whether m names a real calendar day in some year.
+func (m MonthDay) Valid() bool {
+	return Date{Year: leapYear, Month: m.Month, Day: m.Day}.Valid()
+}
+
+func (m MonthDay) String() string {
+	return fmt.Sprintf("%02d-%02d", m.Month, m.Day)
 }
 
 // TimeOfDay is a wall-clock time with minute precision.

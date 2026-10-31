@@ -21,6 +21,45 @@ import (
 
 func TestMain(m *testing.M) { pgtest.Main(m, pgtest.SeedConfig) }
 
+func TestRecurringClosuresLoadAndReplace(t *testing.T) {
+	ctx := context.Background()
+	p := pgtest.Pool(t)
+	loc, _ := businesstime.LoadLocation()
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	closure := func(s string) rentalspg.RecurringClosure {
+		d, err := businesstime.ParseMonthDay(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rentalspg.RecurringClosure{Date: d, Reason: "fixture"}
+	}
+	if err := rentalspg.ReplaceRecurringClosures(ctx, tx, []rentalspg.RecurringClosure{closure("01-01"), closure("12-25")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rentalspg.ReplaceRecurringClosures(ctx, tx, []rentalspg.RecurringClosure{closure("12-25")}); err != nil {
+		t.Fatal(err)
+	}
+	cal, err := rentalspg.LoadCalendar(ctx, tx, loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"2026-12-25", "2027-12-25"} {
+		if _, err := cal.ResolveSchedule(pgtest.Date(t, d), "morning", 24*time.Hour); !errors.Is(err, rentals.ErrStoreClosed) {
+			t.Errorf("%s: err = %v", d, err)
+		}
+	}
+	if _, err := cal.ResolveSchedule(pgtest.Date(t, "2027-01-01"), "morning", 24*time.Hour); err != nil {
+		t.Errorf("a replaced closure must stop applying: %v", err)
+	}
+	if _, err := p.Exec(ctx, `INSERT INTO store_recurring_closures (month, day) VALUES (2, 30)`); err == nil {
+		t.Error("the database must refuse 02-30")
+	}
+}
+
 func placed(t *testing.T, f *pgtest.Fixture, c pgtest.Catalog, customer identity.Principal) *rentals.Booking {
 	t.Helper()
 	ctx := context.Background()

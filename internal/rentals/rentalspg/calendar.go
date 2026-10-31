@@ -45,6 +45,42 @@ func AddClosure(ctx context.Context, q postgres.Querier, d businesstime.Date, re
 	return nil
 }
 
+// RecurringClosure is a date the store closes every year.
+type RecurringClosure struct {
+	Date   businesstime.MonthDay
+	Reason string
+}
+
+// ReplaceRecurringClosures replaces the dates closed every year.
+func ReplaceRecurringClosures(ctx context.Context, q postgres.Querier, closures []RecurringClosure) error {
+	if _, err := q.Exec(ctx, `DELETE FROM store_recurring_closures`); err != nil {
+		return fmt.Errorf("replace recurring closures: %w", err)
+	}
+	for _, c := range closures {
+		if _, err := q.Exec(ctx, `INSERT INTO store_recurring_closures (month, day, reason) VALUES ($1, $2, $3)`,
+			int(c.Date.Month), c.Date.Day, c.Reason); err != nil {
+			return fmt.Errorf("replace recurring closure %s: %w", c.Date, err)
+		}
+	}
+	return nil
+}
+
+func loadRecurringClosures(ctx context.Context, q postgres.Querier) ([]businesstime.MonthDay, error) {
+	rows, err := q.Query(ctx, `SELECT month, day FROM store_recurring_closures ORDER BY month, day`)
+	if err != nil {
+		return nil, fmt.Errorf("load recurring closures: %w", err)
+	}
+	days, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (businesstime.MonthDay, error) {
+		var month, day int
+		err := r.Scan(&month, &day)
+		return businesstime.MonthDay{Month: time.Month(month), Day: day}, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("load recurring closures: %w", err)
+	}
+	return days, nil
+}
+
 // LoadCalendar builds the store calendar from slots and closures. Dates and
 // times are local to loc; the calendar validates overlaps on load.
 func LoadCalendar(ctx context.Context, q postgres.Querier, loc *time.Location) (*rentals.StoreCalendar, error) {
@@ -98,6 +134,13 @@ func LoadCalendar(ctx context.Context, q postgres.Querier, loc *time.Location) (
 		return nil, err
 	}
 	if err := cal.SetDeliveryWindows(weekly[SlotDelivery]); err != nil {
+		return nil, err
+	}
+	recurring, err := loadRecurringClosures(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	if err := cal.SetRecurringClosures(recurring); err != nil {
 		return nil, err
 	}
 	return cal, nil

@@ -64,6 +64,8 @@ type StoreCalendar struct {
 	loc    *time.Location
 	weekly map[time.Weekday][]Slot
 	closed map[businesstime.Date]bool
+	// recurring holds the dates closed every year (decision D25).
+	recurring map[businesstime.MonthDay]bool
 	// delivery holds the courier delivery/pickup windows (decision D19).
 	delivery map[time.Weekday][]Slot
 }
@@ -114,6 +116,25 @@ func sortedSlots(field string, weekly map[time.Weekday][]Slot) (map[time.Weekday
 // Location returns the business timezone.
 func (c *StoreCalendar) Location() *time.Location { return c.loc }
 
+// SetRecurringClosures configures the dates the store closes every year.
+// Lunar holidays move between years and are listed as closed dates instead.
+func (c *StoreCalendar) SetRecurringClosures(days []businesstime.MonthDay) error {
+	recurring := make(map[businesstime.MonthDay]bool, len(days))
+	for _, d := range days {
+		if !d.Valid() {
+			return fmt.Errorf("recurring closure %s: %w", d, businesstime.ErrInvalidMonthDay)
+		}
+		recurring[d] = true
+	}
+	c.recurring = recurring
+	return nil
+}
+
+// isClosed reports whether the store is closed on a local date.
+func (c *StoreCalendar) isClosed(d businesstime.Date) bool {
+	return c.closed[d] || c.recurring[d.MonthDay()]
+}
+
 // ResolveSchedule converts a local pickup date and slot plus the package
 // duration into a schedule. due_at = pickup_at + duration exactly; it must
 // land on a return slot on an open day, otherwise the choice is rejected.
@@ -121,7 +142,7 @@ func (c *StoreCalendar) ResolveSchedule(pickupDate businesstime.Date, slotID str
 	if !pickupDate.Valid() {
 		return Schedule{}, businesstime.ErrInvalidDate
 	}
-	if c.closed[pickupDate] {
+	if c.isClosed(pickupDate) {
 		return Schedule{}, fmt.Errorf("pickup %s: %w", pickupDate, ErrStoreClosed)
 	}
 	i := slices.IndexFunc(c.weekly[pickupDate.Weekday()], func(s Slot) bool { return s.ID == slotID })
@@ -148,7 +169,7 @@ func (c *StoreCalendar) ValidateSchedule(s Schedule) error {
 
 func (c *StoreCalendar) onSlotStart(t time.Time) bool {
 	d := businesstime.DateOf(t, c.loc)
-	if c.closed[d] {
+	if c.isClosed(d) {
 		return false
 	}
 	tod, exact := businesstime.TimeOfDayOf(t, c.loc)

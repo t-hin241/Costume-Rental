@@ -39,6 +39,27 @@ func TestParseDateRejectsNonCalendarDates(t *testing.T) {
 	}
 }
 
+func TestParseMonthDay(t *testing.T) {
+	for _, s := range []string{"02-30", "13-01", "00-10", "1-1", "2026-12-25", ""} {
+		if _, err := businesstime.ParseMonthDay(s); !errors.Is(err, businesstime.ErrInvalidMonthDay) {
+			t.Errorf("ParseMonthDay(%q) err = %v", s, err)
+		}
+	}
+	for _, s := range []string{"02-29", "12-25"} {
+		m, err := businesstime.ParseMonthDay(s)
+		if err != nil || m.String() != s || !m.Valid() {
+			t.Errorf("ParseMonthDay(%q) = %v, %v", s, m, err)
+		}
+	}
+	if (businesstime.MonthDay{Month: 2, Day: 30}).Valid() {
+		t.Error("02-30 must not be valid")
+	}
+	d, err := businesstime.ParseDate("2027-09-02")
+	if err != nil || d.MonthDay().String() != "09-02" {
+		t.Fatalf("MonthDay of %s = %s, %v", d, d.MonthDay(), err)
+	}
+}
+
 func TestParseTimeOfDay(t *testing.T) {
 	for _, s := range []string{"24:00", "9:00", "+9:00", "09:60", "ab:cd"} {
 		if _, err := businesstime.ParseTimeOfDay(s); !errors.Is(err, businesstime.ErrInvalidTimeOfDay) {
