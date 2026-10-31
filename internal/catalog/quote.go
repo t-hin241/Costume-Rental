@@ -92,7 +92,7 @@ func QuoteBundle(b Bundle, items map[ItemID]Item, selections map[string]VariantI
 	componentDeposits := make([]money.Money, 0, len(b.Components))
 	for _, c := range b.Components {
 		item, ok := items[c.ItemID]
-		if !ok {
+		if !ok || item.Status != StatusActive {
 			return LineQuote{}, fmt.Errorf("bundle %s component %s item %s: %w", b.ID, c.Key, c.ItemID, ErrOfferingUnavailable)
 		}
 		chosen, ok := selections[c.Key]

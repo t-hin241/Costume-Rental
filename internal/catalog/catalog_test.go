@@ -196,6 +196,17 @@ func TestBundleSelectionRules(t *testing.T) {
 	}
 }
 
+func TestBundleRefusesComponentItemThatIsNotActive(t *testing.T) {
+	items, bundle := fixture()
+	belt := items["belt"]
+	belt.Status = catalog.StatusArchived
+	items["belt"] = belt
+	sel := map[string]catalog.VariantID{"jacket": "jacket-m", "pants": "pants-m"}
+	if _, err := catalog.QuoteBundle(bundle, items, sel, pkg1, 1); !errors.Is(err, catalog.ErrOfferingUnavailable) {
+		t.Fatalf("archived component err = %v", err)
+	}
+}
+
 func TestItemQuoteRules(t *testing.T) {
 	items, _ := fixture()
 	q, err := catalog.QuoteItem(items["jacket"], "jacket-m", pkg1, 1)

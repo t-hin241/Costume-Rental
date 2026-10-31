@@ -110,6 +110,9 @@ type StatusInput struct {
 // allocation it came back under is closed, which frees the rest of its
 // turnaround buffer for new bookings. Allocations of future bookings are
 // never touched: if their asset is lost, staff re-allocate them.
+//
+// A RENTED asset is refused: its booking owns what happens to it, through
+// rentalsapp.RecordReturn, ReportMissing and ConfirmLost.
 func (s *Service) ChangeStatus(ctx context.Context, p identity.Principal, id inventory.AssetID, in StatusInput) (inventory.Asset, error) {
 	if err := authorize(p, in.Action); err != nil {
 		return inventory.Asset{}, err
@@ -121,6 +124,9 @@ func (s *Service) ChangeStatus(ctx context.Context, p identity.Principal, id inv
 			return err
 		}
 		a := assets[0]
+		if a.Status == inventory.AssetRented {
+			return inventory.ErrAssetOnRental
+		}
 		now := s.now().UTC()
 		c, err := apply(&a, in, p.Actor(), now)
 		if err != nil {

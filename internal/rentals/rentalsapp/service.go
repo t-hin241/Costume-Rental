@@ -1,14 +1,16 @@
 // Package rentalsapp runs the rental use cases against PostgreSQL. Each use
 // case authorises the principal, loads state under lock, applies the domain
-// rules and persists the booking, its allocations, history and audit in one
-// transaction, so a failure leaves nothing half-written.
+// rules and persists the booking, its ledger, allocations, history and audit
+// in one transaction, so a failure leaves nothing half-written.
 //
 // Lock order, followed everywhere to avoid deadlocks: booking row, then its
-// modification row, then asset rows in id order (inventorypg).
+// modification row, then asset rows in id order (inventorypg). A ledger row
+// is only taken while holding its booking, so it adds no ordering of its own.
 package rentalsapp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -28,20 +30,13 @@ import (
 	"webee_rentor/internal/rentals/rentalspg"
 )
 
-// FundsReader reports the payments a booking has received, read inside the
-// caller's transaction. The payments repository implements it; until then
-// callers supply their own.
-type FundsReader interface {
-	Funds(ctx context.Context, q postgres.Querier, b *rentals.Booking) (rentals.Funds, error)
-}
-
 // Service holds the dependencies of the rental use cases.
 type Service struct {
-	pool  *pgxpool.Pool
-	funds FundsReader
-	loc   *time.Location
-	now   func() time.Time
-	newID func() string
+	pool   *pgxpool.Pool
+	loc    *time.Location
+	now    func() time.Time
+	newID  func() string
+	notify Notifier
 }
 
 // Option customises a Service.
@@ -50,9 +45,12 @@ type Option func(*Service)
 // WithClock replaces time.Now, for tests and replaying jobs.
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
 
+// WithNotifier tells customers about their bookings; without it nothing is sent.
+func WithNotifier(n Notifier) Option { return func(s *Service) { s.notify = n } }
+
 // New builds the service. loc is the business timezone.
-func New(pool *pgxpool.Pool, funds FundsReader, loc *time.Location, opts ...Option) *Service {
-	s := &Service{pool: pool, funds: funds, loc: loc, now: time.Now, newID: ids.New}
+func New(pool *pgxpool.Pool, loc *time.Location, opts ...Option) *Service {
+	s := &Service{pool: pool, loc: loc, now: time.Now, newID: ids.New}
 	for _, o := range opts {
 		o(s)
 	}
@@ -97,6 +95,26 @@ func lockInventory(ctx context.Context, q postgres.Querier, variants []catalog.V
 		return rentals.InventoryView{}, err
 	}
 	return rentals.InventoryView{Assets: assets, Allocations: allocs, Policy: policy}, nil
+}
+
+// lockBookingInventory is lockInventory for re-planning a booking. The view
+// also holds the booking's own active allocations, even those on retired
+// assets that lockInventory skips, so that they are released with the rest.
+func lockBookingInventory(ctx context.Context, q postgres.Querier, id rentals.BookingID, variants []catalog.VariantID, policy inventory.AllocationPolicy) (rentals.InventoryView, error) {
+	view, err := lockInventory(ctx, q, variants, policy)
+	if err != nil {
+		return rentals.InventoryView{}, err
+	}
+	own, err := inventorypg.AllocationsOfBooking(ctx, q, string(id), true)
+	if err != nil {
+		return rentals.InventoryView{}, err
+	}
+	for _, a := range own {
+		if !slices.ContainsFunc(view.Allocations, func(v inventory.Allocation) bool { return v.ID == a.ID }) {
+			view.Allocations = append(view.Allocations, a)
+		}
+	}
+	return view, nil
 }
 
 func assetIDs(assets []inventory.Asset) []inventory.AssetID {
@@ -202,6 +220,7 @@ type change func(tx pgx.Tx, b *rentals.Booking, scope identity.Scope, now time.T
 // mutate runs a booking use case: lock, authorise, apply, save, record.
 func (s *Service) mutate(ctx context.Context, p identity.Principal, id rentals.BookingID, action rentals.Action, fn change) (*rentals.Booking, error) {
 	var out *rentals.Booking
+	var done []rentals.Transition
 	err := postgres.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		b, v, err := rentalspg.LoadBooking(ctx, tx, id, true)
 		if err != nil {
@@ -222,13 +241,37 @@ func (s *Service) mutate(ctx context.Context, p identity.Principal, id rentals.B
 		if err := s.record(ctx, tx, ts...); err != nil {
 			return err
 		}
-		out = b
+		out, done = b, ts
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", action, id, err)
 	}
+	s.tell(ctx, out, done)
 	return out, nil
+}
+
+// expireEach runs one job step per due record, each in its own transaction.
+// A record that fails is reported and skipped: it must not keep every later
+// hold blocking stock. It returns how many records changed.
+func expireEach[ID any](ctx context.Context, due []ID, step func(ID) (bool, error)) (int, error) {
+	expired := 0
+	var errs []error
+	for _, id := range due {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		changed, err := step(id)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("expire %v: %w", id, err))
+			continue
+		}
+		if changed {
+			expired++
+		}
+	}
+	return expired, errors.Join(errs...)
 }
 
 // endOpenModification cancels the booking's open change request, if any,

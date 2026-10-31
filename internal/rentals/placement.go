@@ -303,6 +303,64 @@ func (b *Booking) Reschedule(req RescheduleRequest) (Rescheduling, error) {
 	return Rescheduling{Transition: t, Release: release, Allocations: planned}, nil
 }
 
+// ReplaceAssetRequest swaps an asset the booking holds for an equivalent one,
+// e.g. it was damaged or lost before handover.
+type ReplaceAssetRequest struct {
+	Actor      identity.Actor
+	Allocation inventory.AllocationID
+	Reason     string
+	Inventory  InventoryView
+	Now        time.Time
+}
+
+// AssetReplacement is the allocation change to persist with the transition.
+type AssetReplacement struct {
+	Transition Transition
+	Release    inventory.AllocationID
+	Allocation inventory.PlannedAllocation
+}
+
+// ReplaceAsset plans another asset of the same variant for the same block.
+// The old allocation keeps blocking its asset while planning, so it cannot be
+// picked again; with no other asset free the booking keeps what it has and
+// staff decide with the customer.
+func (b *Booking) ReplaceAsset(req ReplaceAssetRequest) (AssetReplacement, error) {
+	if !req.Actor.IsUser() {
+		return AssetReplacement{}, ErrActorRequired
+	}
+	if err := b.requireStatus(ActionReplaceAsset, StatusPendingConfirmation, StatusConfirmed, StatusPreparing); err != nil {
+		return AssetReplacement{}, err
+	}
+	if b.OpenModification != "" {
+		return AssetReplacement{}, fmt.Errorf("booking %s: %w", b.ID, ErrModificationOpen)
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		return AssetReplacement{}, ErrReasonRequired
+	}
+	i := slices.IndexFunc(req.Inventory.Allocations, func(a inventory.Allocation) bool {
+		return a.ID == req.Allocation && a.BookingRef == string(b.ID) && a.Status == inventory.AllocationActive &&
+			!a.Tentative() && a.HandedOverAt == nil
+	})
+	if i < 0 {
+		return AssetReplacement{}, fmt.Errorf("booking %s allocation %s: %w", b.ID, req.Allocation, ErrAssetMismatch)
+	}
+	old := req.Inventory.Allocations[i]
+	planned, err := inventory.Plan(inventory.PlanRequest{
+		BookingRef: string(b.ID),
+		Demands: []inventory.Demand{{LineRef: old.LineRef, ComponentKey: old.ComponentKey, VariantID: old.VariantID,
+			Quantity: 1, Block: old.Block}},
+		Assets: req.Inventory.Assets, Allocations: req.Inventory.Allocations, Now: req.Now, Policy: req.Inventory.Policy,
+	})
+	if err != nil {
+		return AssetReplacement{}, fmt.Errorf("replace asset on booking %s: %w", b.ID, err)
+	}
+	t := Transition{
+		BookingID: b.ID, Action: ActionReplaceAsset, From: b.Status, To: b.Status, Actor: req.Actor, At: req.Now.UTC(),
+		Reason: fmt.Sprintf("%s → %s: %s", old.AssetID, planned[0].AssetID, req.Reason),
+	}
+	return AssetReplacement{Transition: t, Release: old.ID, Allocation: planned[0]}, nil
+}
+
 // checkScheduleWindow checks the booking horizon of the policy; slots and
 // delivery windows are checked by StoreCalendar.ValidateFulfillment.
 func checkScheduleWindow(s Schedule, p Policy, now time.Time) error {

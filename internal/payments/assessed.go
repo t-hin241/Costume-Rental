@@ -48,6 +48,15 @@ func (l *Ledger) AddApprovedFee(id ChargeID, kind ChargeKind, amount money.Money
 	return c, true, nil
 }
 
+// ChargeOfAssessment finds the charge recording an assessment.
+func (l *Ledger) ChargeOfAssessment(ref string) (Charge, bool) {
+	i := slices.IndexFunc(l.Charges, func(c Charge) bool { return c.AssessmentRef == ref })
+	if i < 0 {
+		return Charge{}, false
+	}
+	return l.Charges[i], true
+}
+
 // ApplySecurityToApprovedFees settles the security deposit against fees that
 // were approved through assessments (fee policy §5):
 // refund_due = max(0, security collected - approved deductions). Each
@@ -72,7 +81,7 @@ func (l *Ledger) ApplySecurityToApprovedFees(prefix string, actor identity.Actor
 		}
 		var covered int64
 		for _, d := range l.Deductions {
-			if d.ChargeID == c.ID && d.Status != DeductionRejected {
+			if d.ChargeID == c.ID && d.Status.counts() {
 				covered += d.Amount.Amount()
 			}
 		}

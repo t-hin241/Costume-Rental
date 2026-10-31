@@ -56,6 +56,7 @@ const (
 	ActionReschedule       Action = "booking.reschedule"
 	ActionReportMissing    Action = "booking.report_missing"
 	ActionConfirmLost      Action = "booking.confirm_lost"
+	ActionReplaceAsset     Action = "booking.replace_asset"
 	ActionModify           Action = "booking.modify"
 	ActionDelivery         Action = "booking.delivery"
 	ActionComplain         Action = "booking.complain"
@@ -242,8 +243,9 @@ type CancellationFee struct {
 // the rent by notice before pickup_at, the no-show rate, or the store-cancel
 // rate. The security deposit is never part of the base. An expired hold or a
 // cancellation for failed payment never secured the date and costs nothing
-// (owner decision D16).
-func (b *Booking) CancellationFee() (CancellationFee, error) {
+// (owner decision D16); nor does a booking cancelled before it was confirmed
+// with no money received (owner decision D26).
+func (b *Booking) CancellationFee(moneyReceived bool) (CancellationFee, error) {
 	c := b.Policy.Cancellation
 	var pct int
 	var basis string
@@ -254,6 +256,8 @@ func (b *Booking) CancellationFee() (CancellationFee, error) {
 		return CancellationFee{}, fmt.Errorf("booking %s cancellation fee from %s: %w", b.ID, b.Status, ErrInvalidTransition)
 	case b.CancelReason == CancelPaymentFailed:
 		pct, basis = 0, "payment failed"
+	case b.ConfirmedAt == nil && !moneyReceived:
+		pct, basis = 0, "cancelled unconfirmed and unpaid"
 	case b.CancelReason == CancelNoShow:
 		pct, basis = c.NoShowFeePercent, "no-show"
 	case b.CancelReason == CancelStaffDecision:
@@ -354,7 +358,13 @@ func (b *Booking) Cancel(req CancelRequest) (Transition, error) {
 			return Transition{}, err
 		}
 		switch req.Reason {
-		case CancelStaffDecision, CancelPaymentFailed:
+		case CancelStaffDecision:
+		case CancelPaymentFailed:
+			// Costs nothing because the date was never secured (D16), so it
+			// cannot be used on a confirmed booking.
+			if err := b.requireStatus(ActionCancel, StatusPendingConfirmation); err != nil {
+				return Transition{}, err
+			}
 		case CancelCustomerRequest:
 			if !req.Now.Before(noShowAt) {
 				return Transition{}, fmt.Errorf("booking %s: %w", b.ID, ErrCancelWindowClosed)

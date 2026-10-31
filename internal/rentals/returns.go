@@ -55,6 +55,21 @@ type InspectionFinding struct {
 
 func (f InspectionFinding) has(c Condition) bool { return slices.Contains(f.Conditions, c) }
 
+// AssetAction is how the finding moves the asset out of inspection, empty
+// when inspection alone cannot decide: NEEDS_VERIFICATION is still open, and
+// repair or retirement belong to inventory management (decision D22). Any
+// soiling goes through cleaning, because an asset only becomes READY once it
+// is fit for the next customer (owner decision D27).
+func (f InspectionFinding) AssetAction() inventory.AssetAction {
+	switch {
+	case f.has(CondNeedsVerification), f.has(CondMinorRepairable), f.has(CondMajorRepairable), f.has(CondIrreparable):
+		return ""
+	case f.has(CondRoutineSoiling), f.has(CondAbnormalSoiling):
+		return inventory.ActionRequireCleaning
+	}
+	return inventory.ActionPassInspection
+}
+
 // RentedItem is one physical asset handed over under the booking.
 type RentedItem struct {
 	AssetID      inventory.AssetID
@@ -71,6 +86,10 @@ type RentedItem struct {
 	// the store; inspection starts here. They are equal for counter returns.
 	ReturnedAt *time.Time
 	ReceivedAt *time.Time
+	// AffectedNext: the item came back too late for the next booking of the
+	// asset. It voids the late-fee grace period and can only be read while the
+	// allocation is still in use, so it is captured when the item is resolved.
+	AffectedNext bool
 	// MissingReportedAt starts MISSING_PENDING; LostConfirmedAt ends it.
 	MissingReportedAt *time.Time
 	LostConfirmedAt   *time.Time
@@ -261,6 +280,17 @@ func (b *Booking) RecordReturn(req ReturnRequest) (Transition, error) {
 	return b.afterItemResolved(ActionReturn, req.Actor, req.Now, strings.Join(assetStrings(req.Assets), ",")), nil
 }
 
+// NoteAffectedNext records that the item's late return disrupted the next
+// booking of its asset.
+func (b *Booking) NoteAffectedNext(asset inventory.AssetID) error {
+	it, err := b.Item(asset)
+	if err != nil {
+		return err
+	}
+	it.AffectedNext = true
+	return nil
+}
+
 // ReportMissing marks an item not brought back as MISSING_PENDING. The
 // customer is notified and has Policy.Loss.VerificationWindow to find it.
 func (b *Booking) ReportMissing(actor identity.Actor, asset inventory.AssetID, now time.Time) (Transition, error) {
@@ -376,6 +406,22 @@ func (b *Booking) refreshInspection(now time.Time) {
 	case !done:
 		b.InspectionCompletedAt = nil
 	}
+}
+
+// ReadyToSettle reports whether the booking's money may be closed: inspection
+// is finished and no fee is still open, so the deposit is only settled once
+// every dispute is resolved (decision D13).
+func (b *Booking) ReadyToSettle(fees []FeeAssessment) error {
+	if err := b.requireStatus(ActionComplete, StatusReturnInspection); err != nil {
+		return err
+	}
+	if b.InspectionCompletedAt == nil {
+		return fmt.Errorf("booking %s: %w", b.ID, ErrInspectionIncomplete)
+	}
+	if CountOpenAssessments(fees) > 0 {
+		return fmt.Errorf("booking %s: %w", b.ID, ErrOpenFeeAssessments)
+	}
+	return nil
 }
 
 // CompletionCheck carries cross-aggregate facts Complete depends on.

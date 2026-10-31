@@ -17,6 +17,7 @@ import (
 	"webee_rentor/internal/inventory"
 	"webee_rentor/internal/inventory/inventorypg"
 	"webee_rentor/internal/money"
+	"webee_rentor/internal/payments"
 	"webee_rentor/internal/platform/postgres"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalspg"
@@ -77,6 +78,9 @@ func SeedConfig(ctx context.Context, p *pgxpool.Pool) error {
 			return err
 		}
 		if err := postgres.SaveDocument(ctx, tx, postgres.DocAllocationPolicy, "fixture-v1", inventory.AllocationPolicy{}, system, Now, true); err != nil {
+			return err
+		}
+		if err := postgres.SaveDocument(ctx, tx, postgres.DocPaymentApproval, "fixture-v1", payments.ApprovalPolicy{DistinctApproverAbove: VND(500_000)}, system, Now, true); err != nil {
 			return err
 		}
 		morning, _ := businesstime.ParseTimeOfDay("09:00")

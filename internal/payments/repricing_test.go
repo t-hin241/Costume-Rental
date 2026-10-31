@@ -7,6 +7,26 @@ import (
 	"webee_rentor/internal/payments"
 )
 
+// A lower deposit frees only the difference; the rest still backs the rental.
+func TestExcessSecurityKeepsWhatTheBookingStillNeeds(t *testing.T) {
+	l := feeLedger(t, 550_000)
+	if got := l.ExcessSecurity(); !got.IsZero() {
+		t.Fatalf("excess before any change = %s", got)
+	}
+	if _, err := l.StageRepricing("mod-1", vnd(200_000), vnd(500_000), clerk, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.CommitRepricing("mod-1", "ch-rent-2", "ch-dep-2", clerk, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.ExcessSecurity(); got.Amount() != 50_000 {
+		t.Fatalf("excess = %s, want the 50.000 the deposit went down", got)
+	}
+	if got := l.Refundable(payments.BucketSecurity); got.Amount() != 550_000 {
+		t.Fatalf("refundable = %s, the whole held deposit when closing", got)
+	}
+}
+
 func payForModification(l *payments.Ledger, id, ref string, rental int64) error {
 	_, _, err := l.RecordCounterPayment(payments.NewPaymentRequest{
 		ID: payments.PaymentID(id), IdempotencyKey: "key-" + id, Method: payments.MethodCash,
@@ -78,6 +98,29 @@ func TestRepricingDecreaseRefundsOnce(t *testing.T) {
 }
 
 // Modification policy test 6: the change is abandoned after payment.
+// Money collected for a staged change stays put until the change ends:
+// PaidForModification must not count money that already went back.
+func TestNoRefundWhileARepricingIsStaged(t *testing.T) {
+	l := ledger(t)
+	payAtCounter(t, l, "p1", 200_000, 550_000)
+	if _, err := l.StageRepricing("mod-1", vnd(260_000), vnd(550_000), clerk, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := l.RecordCounterPayment(payments.NewPaymentRequest{
+		ID: "p2", IdempotencyKey: "k2", Method: payments.MethodCash, ModificationRef: "mod-1",
+		Portions: portions(60_000, 0), Actor: clerk, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := l.RequestRefund("r1", "rk1", payments.BucketRental, vnd(60_000), "đổi ý", clerk, now); !errors.Is(err, payments.ErrRepricingConflict) {
+		t.Fatalf("refund during repricing err = %v", err)
+	}
+	l.DiscardRepricing("mod-1")
+	if _, _, err := l.RequestRefund("r1", "rk1", payments.BucketRental, vnd(60_000), "đổi ý", clerk, now); err != nil {
+		t.Fatalf("refund after discard: %v", err)
+	}
+}
+
 func TestDiscardedRepricingLeavesPaymentRefundable(t *testing.T) {
 	l := feeLedger(t, 550_000)
 	if _, err := l.StageRepricing("mod-1", vnd(260_000), vnd(550_000), clerk, now); err != nil {

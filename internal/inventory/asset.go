@@ -82,6 +82,7 @@ var assetRules = map[AssetAction]assetRule{
 
 var (
 	ErrInvalidAssetTransition = domainerr.New(domainerr.KindInvalidState, "inventory.invalid_asset_transition", "asset cannot make this transition from its current status")
+	ErrAssetOnRental          = domainerr.New(domainerr.KindInvalidState, "inventory.asset_on_rental", "asset is with a customer; record what happened to it on the booking")
 	ErrReasonRequired         = domainerr.New(domainerr.KindInvalid, "inventory.reason_required", "a reason is required for this change")
 	ErrChecklistIncomplete    = domainerr.New(domainerr.KindInvalid, "inventory.checklist_incomplete", "inspection checklist must be completed")
 	ErrActorRequired          = domainerr.New(domainerr.KindInvalid, "inventory.actor_required", "a valid actor is required")

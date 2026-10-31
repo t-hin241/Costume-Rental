@@ -126,13 +126,13 @@ func TestDepositDeductionAndRefundReconcile(t *testing.T) {
 	if l.Summary().State != payments.StateRefundPending {
 		t.Fatalf("state = %s", l.Summary().State)
 	}
-	if err := l.RecordCounterRefund(r.ID, clerk, now); !errors.Is(err, payments.ErrInvalidTransition) {
-		t.Fatalf("paying out an unapproved refund err = %v", err)
+	if err := l.MarkRefundSubmitted(r.ID, "psp", "ref-1"); !errors.Is(err, payments.ErrInvalidTransition) {
+		t.Fatalf("sending an unapproved refund to the provider err = %v", err)
 	}
 	if err := l.ApproveRefund(r.ID, finance, approval, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.RecordCounterRefund(r.ID, clerk, now); err != nil {
+	if err := l.RecordCounterRefund(r.ID, cashNow, clerk, now); err != nil {
 		t.Fatal(err)
 	}
 	s = l.Summary()
@@ -262,6 +262,45 @@ func TestLateSuccessAfterExpiryIsRecordedForReview(t *testing.T) {
 	}
 }
 
+func settleWithoutFee(t *testing.T, l *payments.Ledger) {
+	t.Helper()
+	if _, _, err := l.SettleCancellation(payments.CancellationRequest{Fee: vnd(0), Basis: "hold expired", Actor: system, Now: now}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Checkout started, then the hold expired: the money still arrives, but the
+// booking is gone, so it is flagged for finance rather than a plain success.
+func TestPaymentLandingOnCancelledBookingNeedsReview(t *testing.T) {
+	l := ledger(t)
+	gateway(t, l, "p1", 200_000, 0)
+	settleWithoutFee(t, l)
+	out, err := l.ApplyPaymentEvent(success("e1", "p1", 200_000))
+	if err != nil || out != payments.OutcomeAppliedNeedsReview || !l.Payments[0].NeedsReview {
+		t.Fatalf("outcome = %s, %v, review %v", out, err, l.Payments[0].NeedsReview)
+	}
+	if got := l.Summary().RentalOutstanding.Amount(); got != -200_000 {
+		t.Fatalf("outstanding = %d, want the payment refundable", got)
+	}
+}
+
+// The expiry job asks for the refund; a person still decides it.
+func TestSystemRequestsRefundButNeverApprovesIt(t *testing.T) {
+	l := ledger(t)
+	payAtCounter(t, l, "p1", 200_000, 0)
+	settleWithoutFee(t, l)
+	r, _, err := l.RequestRefund("r1", "rk1", payments.BucketRental, vnd(200_000), "hold expired", system, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ApproveRefund(r.ID, system, approval, now); !errors.Is(err, payments.ErrActorRequired) {
+		t.Fatalf("system approving err = %v", err)
+	}
+	if err := l.ApproveRefund(r.ID, finance, approval, now); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRefundProviderFailureAndRetry(t *testing.T) {
 	l := ledger(t)
 	payAtCounter(t, l, "p1", 200_000, 550_000)
@@ -306,7 +345,7 @@ func TestRefundProviderFailureAndRetry(t *testing.T) {
 		if err := l.ApproveRefund(id, finance, approval, now); err != nil {
 			t.Fatal(err)
 		}
-		if err := l.RecordCounterRefund(id, clerk, now); err != nil {
+		if err := l.RecordCounterRefund(id, cashNow, clerk, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -337,7 +376,7 @@ func TestCancellationRefundNeedsExplicitReversal(t *testing.T) {
 	if err := l.ApproveRefund(r.ID, finance, approval, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := l.RecordCounterRefund(r.ID, finance, now); err != nil {
+	if err := l.RecordCounterRefund(r.ID, cashNow, finance, now); err != nil {
 		t.Fatal(err)
 	}
 	if s := l.Summary(); s.State != payments.StateRefunded || !s.IsSettled() {

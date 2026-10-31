@@ -204,9 +204,10 @@ func saveItems(ctx context.Context, q postgres.Querier, b *rentals.Booking) erro
 		if _, err := q.Exec(ctx, `
 			INSERT INTO booking_items (booking_id, asset_id, position, line_id, component_key, variant_id, daily_rate,
 				preexisting_issues, returned_at, received_at, missing_reported_at, lost_confirmed_at, carrier_liable,
-				carrier_damage_reported, not_received, arrival_issue, collect_by_store, replacement_for, replaced_by, finding)
+				carrier_damage_reported, not_received, arrival_issue, collect_by_store, replacement_for, replaced_by, finding,
+				affected_next_booking)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-				nullif($18, ''), nullif($19, ''), $20)
+				nullif($18, ''), nullif($19, ''), $20, $21)
 			ON CONFLICT (booking_id, asset_id) DO UPDATE SET position = EXCLUDED.position,
 				preexisting_issues = EXCLUDED.preexisting_issues, returned_at = EXCLUDED.returned_at,
 				received_at = EXCLUDED.received_at, missing_reported_at = EXCLUDED.missing_reported_at,
@@ -214,11 +215,11 @@ func saveItems(ctx context.Context, q postgres.Querier, b *rentals.Booking) erro
 				carrier_damage_reported = EXCLUDED.carrier_damage_reported, not_received = EXCLUDED.not_received,
 				arrival_issue = EXCLUDED.arrival_issue, collect_by_store = EXCLUDED.collect_by_store,
 				replacement_for = EXCLUDED.replacement_for, replaced_by = EXCLUDED.replaced_by,
-				finding = EXCLUDED.finding`,
+				finding = EXCLUDED.finding, affected_next_booking = EXCLUDED.affected_next_booking`,
 			b.ID, it.AssetID, i, it.LineID, it.ComponentKey, it.VariantID, it.DailyRate.Amount(),
 			it.PreexistingIssues, it.ReturnedAt, it.ReceivedAt, it.MissingReportedAt, it.LostConfirmedAt,
 			it.CarrierLiable, it.CarrierDamageReported, it.NotReceived, it.ArrivalIssue, it.CollectByStore,
-			it.ReplacementFor, it.ReplacedBy, finding); err != nil {
+			it.ReplacementFor, it.ReplacedBy, finding, it.AffectedNext); err != nil {
 			return fmt.Errorf("booking %s item %s: %w", b.ID, it.AssetID, err)
 		}
 	}
@@ -347,8 +348,8 @@ func loadLines(ctx context.Context, q postgres.Querier, id rentals.BookingID, cu
 func loadItems(ctx context.Context, q postgres.Querier, id rentals.BookingID, cur money.Currency) ([]rentals.RentedItem, error) {
 	rows, err := q.Query(ctx, `SELECT asset_id, line_id, component_key, variant_id, daily_rate, preexisting_issues,
 		returned_at, received_at, missing_reported_at, lost_confirmed_at, carrier_liable, carrier_damage_reported,
-		not_received, arrival_issue, collect_by_store, coalesce(replacement_for, ''), coalesce(replaced_by, ''), finding
-		FROM booking_items WHERE booking_id = $1 ORDER BY position`, id)
+		not_received, arrival_issue, collect_by_store, coalesce(replacement_for, ''), coalesce(replaced_by, ''), finding,
+		affected_next_booking FROM booking_items WHERE booking_id = $1 ORDER BY position`, id)
 	if err != nil {
 		return nil, fmt.Errorf("booking %s items: %w", id, err)
 	}
@@ -359,7 +360,8 @@ func loadItems(ctx context.Context, q postgres.Querier, id rentals.BookingID, cu
 		var replFor, replBy string
 		if err := r.Scan(&it.AssetID, &it.LineID, &it.ComponentKey, &it.VariantID, &rate, &it.PreexistingIssues,
 			&it.ReturnedAt, &it.ReceivedAt, &it.MissingReportedAt, &it.LostConfirmedAt, &it.CarrierLiable,
-			&it.CarrierDamageReported, &it.NotReceived, &it.ArrivalIssue, &it.CollectByStore, &replFor, &replBy, &finding); err != nil {
+			&it.CarrierDamageReported, &it.NotReceived, &it.ArrivalIssue, &it.CollectByStore, &replFor, &replBy, &finding,
+			&it.AffectedNext); err != nil {
 			return it, err
 		}
 		it.ReplacementFor, it.ReplacedBy = inventory.AssetID(replFor), inventory.AssetID(replBy)

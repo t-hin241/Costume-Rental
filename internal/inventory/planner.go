@@ -195,6 +195,11 @@ func newPool(assets []Asset, allocs []Allocation, now time.Time, policy Allocati
 	return p
 }
 
+// candidate reports whether the asset is still among the plan's candidates.
+func (p *pool) candidate(variant catalog.VariantID, asset AssetID) bool {
+	return slices.ContainsFunc(p.byVariant[variant], func(a Asset) bool { return a.ID == asset })
+}
+
 // free reports whether block on asset is clear of other allocations
 // (ignoring skip) and of this plan's own picks.
 func (p *pool) free(asset AssetID, block period.Range, skip AllocationID) bool {

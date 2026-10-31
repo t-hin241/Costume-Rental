@@ -18,7 +18,15 @@ const (
 	DeductionProposed DeductionStatus = "PROPOSED"
 	DeductionApproved DeductionStatus = "APPROVED"
 	DeductionRejected DeductionStatus = "REJECTED"
+	// DeductionReversed gave an applied deduction back to the deposit because
+	// its fee was waived or lowered. The record stays.
+	DeductionReversed DeductionStatus = "REVERSED"
 )
+
+// counts reports whether the deduction covers its fee.
+func (s DeductionStatus) counts() bool {
+	return s == DeductionProposed || s == DeductionApproved
+}
 
 // Deduction applies part of the held security deposit to an assessed fee.
 type Deduction struct {
@@ -33,6 +41,10 @@ type Deduction struct {
 	DecidedBy    *identity.Actor
 	DecidedAt    *time.Time
 	DecisionNote string
+	// Set when the deduction is reversed.
+	ReversedBy     *identity.Actor
+	ReversedAt     *time.Time
+	ReversalReason string
 }
 
 // ProposeDeduction reserves deposit to cover a fee, pending approval. The
@@ -60,7 +72,7 @@ func (l *Ledger) ProposeDeduction(id DeductionID, chargeID ChargeID, amount mone
 	}
 	var covered int64
 	for _, d := range l.Deductions {
-		if d.ChargeID == chargeID && d.Status != DeductionRejected {
+		if d.ChargeID == chargeID && d.Status.counts() {
 			covered += d.Amount.Amount()
 		}
 	}
@@ -111,6 +123,27 @@ func (l *Ledger) RejectDeduction(id DeductionID, actor identity.Actor, note stri
 	}
 	d.Status, d.DecidedBy, d.DecidedAt, d.DecisionNote = DeductionRejected, &actor, ptr(now), note
 	return nil
+}
+
+// ReverseDeductions gives back to the deposit what it covered of a charge,
+// for a fee being waived or lowered (owner decision D29). The records stay;
+// the amount becomes free deposit again. It returns what was reversed.
+func (l *Ledger) ReverseDeductions(chargeID ChargeID, reason string, actor identity.Actor, now time.Time) ([]Deduction, error) {
+	if !actor.IsUser() {
+		return nil, ErrActorRequired
+	}
+	if strings.TrimSpace(reason) == "" {
+		return nil, ErrReasonRequired
+	}
+	var out []Deduction
+	for i := range l.Deductions {
+		d := &l.Deductions[i]
+		if d.ChargeID == chargeID && d.Status == DeductionApproved {
+			d.Status, d.ReversedBy, d.ReversedAt, d.ReversalReason = DeductionReversed, &actor, ptr(now), reason
+			out = append(out, *d)
+		}
+	}
+	return out, nil
 }
 
 func (l *Ledger) deduction(id DeductionID) (*Deduction, error) {

@@ -14,21 +14,12 @@ import (
 	"webee_rentor/internal/inventory"
 	"webee_rentor/internal/inventory/inventoryapp"
 	"webee_rentor/internal/inventory/inventorypg"
-	"webee_rentor/internal/platform/postgres"
 	"webee_rentor/internal/platform/postgres/pgtest"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalsapp"
 )
 
 func TestMain(m *testing.M) { pgtest.Main(m, pgtest.SeedConfig) }
-
-// paidInFull stands in for the payments repository: every booking has
-// received its reservation, rent and security deposit.
-type paidInFull struct{}
-
-func (paidInFull) Funds(_ context.Context, _ postgres.Querier, b *rentals.Booking) (rentals.Funds, error) {
-	return rentals.Funds{RentalCovered: b.RentTotal, SecurityHeld: b.SecurityDepositTotal, ReservationHeld: b.ReservationDeposit}, nil
-}
 
 type env struct {
 	t     *testing.T
@@ -38,6 +29,8 @@ type env struct {
 	svc   *rentalsapp.Service
 	inv   *inventoryapp.Service
 	staff identity.Principal
+	// finance approves refunds and fees; staff never can (decision D22).
+	finance identity.Principal
 }
 
 func setup(t *testing.T) *env {
@@ -50,9 +43,10 @@ func setup(t *testing.T) *env {
 	clock := pgtest.NewClock(pgtest.Now)
 	return &env{
 		t: t, f: f, c: f.Catalog(), clock: clock,
-		svc:   rentalsapp.New(f.Pool, paidInFull{}, loc, rentalsapp.WithClock(clock.Now)),
-		inv:   inventoryapp.New(f.Pool, inventoryapp.WithClock(clock.Now)),
-		staff: f.User("staff", identity.RoleRentalStaff),
+		svc:     rentalsapp.New(f.Pool, loc, rentalsapp.WithClock(clock.Now)),
+		inv:     inventoryapp.New(f.Pool, inventoryapp.WithClock(clock.Now)),
+		staff:   f.User("staff", identity.RoleRentalStaff),
+		finance: f.User("finance", identity.RoleFinance),
 	}
 }
 
@@ -235,6 +229,7 @@ func TestExpireHoldsReleasesOnlyUnconfirmed(t *testing.T) {
 	b := e.f.User("b", identity.RoleCustomer)
 	pending := e.place(a, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
 	kept := e.place(b, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
+	e.payInFull(kept)
 	if _, err := e.svc.Confirm(ctx, e.staff, kept.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -290,6 +285,7 @@ func TestRescheduleKeepsOldAllocationsWhenTheNewTimeIsTaken(t *testing.T) {
 func (e *env) handOver(b *rentals.Booking, at time.Time) {
 	e.t.Helper()
 	ctx := context.Background()
+	e.payInFull(b)
 	if _, err := e.svc.Confirm(ctx, e.staff, b.ID); err != nil {
 		e.t.Fatal(err)
 	}
@@ -379,6 +375,174 @@ func TestLateReturnKeepsBlockingAndIsReported(t *testing.T) {
 	customer := e.f.User("d", identity.RoleCustomer)
 	if _, err := e.inv.OverdueConflicts(ctx, customer, time.Hour); !errors.Is(err, identity.ErrForbidden) {
 		t.Fatalf("customer reading inventory conflicts: err = %v", err)
+	}
+}
+
+// waitForLockWait returns once a session of this database waits on a row lock.
+func (e *env) waitForLockWait() {
+	e.t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		var n int
+		if err := e.f.Pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			e.t.Fatal(err)
+		}
+		if n > 0 {
+			return
+		}
+	}
+	e.t.Fatal("no session is waiting on a lock")
+}
+
+// The job listed the booking, then a confirmation took the row first. The job
+// must leave the booking and its open change request exactly as they are.
+func TestExpireLosingRaceToConfirmLeavesChangeRequestOpen(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	e.f.Assets(e.c.JacketM, 1)
+	e.f.Assets(e.c.JacketL, 1)
+	a := e.f.User("a", identity.RoleCustomer)
+	booked := e.place(a, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
+	m, err := e.svc.RequestModification(ctx, a, booked.ID, rentalsapp.ModificationInput{
+		Changes: []rentalsapp.LineChangeInput{{LineID: "L1", Line: e.item(e.c.JacketL)}}, Reason: "size",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.QuoteModification(ctx, a, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Set(pgtest.Now.Add(31 * time.Minute))
+
+	tx, err := e.f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM bookings WHERE id = $1 FOR UPDATE`, booked.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := e.svc.ExpireHolds(ctx, 1000)
+		done <- err
+	}()
+	e.waitForLockWait()
+	if _, err := tx.Exec(ctx, `UPDATE bookings SET status = 'CONFIRMED', confirmed_at = $2, version = version + 1 WHERE id = $1`,
+		booked.ID, pgtest.Now.Add(29*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	var status string
+	if err := e.f.Pool.QueryRow(ctx, `SELECT status FROM booking_modifications WHERE id = $1`, m.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.svc.Booking(ctx, a, booked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != string(rentals.ModQuoted) || got.Status != rentals.StatusConfirmed || got.OpenModification != m.ID || len(e.active(booked.ID)) != 2 {
+		t.Fatalf("modification %s, booking %s open %q, active %d; the job must change nothing", status, got.Status, got.OpenModification, len(e.active(booked.ID)))
+	}
+}
+
+// One booking the job cannot process must not keep the others blocking stock.
+func TestExpireHoldsContinuesPastAFailure(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	e.f.Assets(e.c.JacketM, 2)
+	a := e.f.User("a", identity.RoleCustomer)
+	b := e.f.User("b", identity.RoleCustomer)
+	broken := e.place(a, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
+	e.clock.Set(pgtest.Now.Add(time.Minute))
+	healthy := e.place(b, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
+	setOpenModification := func(v *string) {
+		t.Helper()
+		if _, err := e.f.Pool.Exec(ctx, `UPDATE bookings SET open_modification_id = $2 WHERE id = $1`, broken.ID, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	missing := "no-such-modification"
+	setOpenModification(&missing)
+	t.Cleanup(func() { setOpenModification(nil) })
+
+	e.clock.Set(pgtest.Now.Add(time.Hour))
+	if _, err := e.svc.ExpireHolds(ctx, 1000); err == nil {
+		t.Fatal("the failed booking must be reported")
+	}
+	if got, _ := e.svc.Booking(ctx, b, healthy.ID); got.Status != rentals.StatusExpired {
+		t.Fatalf("healthy booking = %s, want it expired", got.Status)
+	}
+}
+
+// Reschedule cannot see retired assets among its candidates, yet it must
+// still release what the booking holds on them.
+func TestRescheduleReleasesAllocationOnRetiredAsset(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	e.f.Assets(e.c.JacketM, 2)
+	a := e.f.User("a", identity.RoleCustomer)
+	mgr := e.f.User("mgr", identity.RoleInventoryManager)
+	booked := e.place(a, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
+	retired := e.active(booked.ID)[0].AssetID
+	if _, err := e.inv.ChangeStatus(ctx, mgr, retired, inventoryapp.StatusInput{Action: inventory.ActionRetire, Reason: "rách không sửa được"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Reschedule(ctx, a, booked.ID, rentalsapp.RescheduleInput{PickupDate: pgtest.Date(t, "2026-11-17"), SlotID: "morning"}); err != nil {
+		t.Fatal(err)
+	}
+	active := e.active(booked.ID)
+	if len(active) != 1 || active[0].AssetID == retired {
+		t.Fatalf("active allocations = %+v, want one on the other jacket", active)
+	}
+}
+
+// A rented asset changes only through its booking, so booking, allocation and
+// asset cannot drift apart: loss goes missing-pending, then confirmed.
+func TestLossGoesThroughTheBooking(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	asset := e.f.Assets(e.c.JacketM, 1)[0]
+	a := e.f.User("a", identity.RoleCustomer)
+	mgr := e.f.User("mgr", identity.RoleInventoryManager)
+	owner := e.f.User("owner", identity.RoleAdmin)
+	booked := e.place(a, e.at("2026-11-10", "morning", e.item(e.c.JacketM)))
+	e.handOver(booked, pgtest.Local(t, "2026-11-10 08:30"))
+
+	if _, err := e.inv.ChangeStatus(ctx, mgr, asset, inventoryapp.StatusInput{Action: inventory.ActionReportMissing, Reason: "không thấy"}); !errors.Is(err, inventory.ErrAssetOnRental) {
+		t.Fatalf("marking a rented asset missing directly: err = %v", err)
+	}
+
+	e.clock.Set(pgtest.Local(t, "2026-11-11 12:00"))
+	if _, err := e.svc.ReportMissing(ctx, a, booked.ID, asset); !errors.Is(err, identity.ErrForbidden) {
+		t.Fatalf("customer reporting missing: err = %v", err)
+	}
+	if _, err := e.svc.ReportMissing(ctx, e.staff, booked.ID, asset); err != nil {
+		t.Fatal(err)
+	}
+	if e.assetStatus(asset) != inventory.AssetRented {
+		t.Fatal("a missing-pending asset stays RENTED until the loss is confirmed")
+	}
+	if _, err := e.svc.ConfirmLost(ctx, owner, booked.ID, asset, "hết hạn xác minh"); !errors.Is(err, rentals.ErrVerificationWindowOpen) {
+		t.Fatalf("confirming inside the window: err = %v", err)
+	}
+
+	e.clock.Set(pgtest.Local(t, "2026-11-13 12:00"))
+	if _, err := e.svc.ConfirmLost(ctx, e.staff, booked.ID, asset, "hết hạn xác minh"); !errors.Is(err, identity.ErrForbidden) {
+		t.Fatalf("staff without rental.confirm_lost: err = %v", err)
+	}
+	got, err := e.svc.ConfirmLost(ctx, owner, booked.ID, asset, "hết hạn xác minh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != rentals.StatusReturnInspection || e.assetStatus(asset) != inventory.AssetMissing || e.allocations(booked.ID)[0].Status != inventory.AllocationClosed {
+		t.Fatalf("booking %s, asset %s, allocation %s", got.Status, e.assetStatus(asset), e.allocations(booked.ID)[0].Status)
 	}
 }
 

@@ -54,7 +54,7 @@ func TestCancellationFeeTable(t *testing.T) {
 		if err := c.cancel(b); err != nil {
 			t.Fatalf("%s: cancel: %v", c.name, err)
 		}
-		fee, err := b.CancellationFee()
+		fee, err := b.CancellationFee(true)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -64,8 +64,55 @@ func TestCancellationFeeTable(t *testing.T) {
 	}
 
 	active := mustPlace(t).Booking
-	if _, err := active.CancellationFee(); !errors.Is(err, rentals.ErrInvalidTransition) {
+	if _, err := active.CancellationFee(true); !errors.Is(err, rentals.ErrInvalidTransition) {
 		t.Fatalf("fee for an active booking err = %v", err)
+	}
+}
+
+// D26: a booking neither confirmed nor paid never held the date. Money
+// received, or a confirmation, brings the table back.
+func TestCancellingBeforeConfirmationAndPaymentIsFree(t *testing.T) {
+	cancel := func(t *testing.T, b *rentals.Booking) {
+		t.Helper()
+		if _, err := b.Cancel(rentals.CancelRequest{Actor: identity.UserActor(customer), Scope: identity.ScopeOwn,
+			Reason: rentals.CancelCustomerRequest, Now: b.Schedule.PickupAt.Add(-2 * day)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unconfirmed := mustPlace(t).Booking
+	cancel(t, unconfirmed)
+	if fee, err := unconfirmed.CancellationFee(false); err != nil || !fee.Fee.IsZero() {
+		t.Fatalf("unpaid: fee = %+v, %v", fee, err)
+	}
+	if fee, err := unconfirmed.CancellationFee(true); err != nil || fee.Fee.Amount() != 60_000 {
+		t.Fatalf("paid but unconfirmed: fee = %+v, %v; want the 30%% tier", fee, err)
+	}
+	confirmed := mustPlace(t).Booking
+	if _, err := confirmed.Confirm(system, funds(60_000, 0, 60_000), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	cancel(t, confirmed)
+	if fee, err := confirmed.CancellationFee(false); err != nil || fee.Fee.Amount() != 60_000 {
+		t.Fatalf("confirmed: fee = %+v, %v; want the 30%% tier", fee, err)
+	}
+}
+
+// PAYMENT_FAILED costs nothing because the date was never secured (D16), so
+// staff cannot pick it on a confirmed booking to skip the cancellation fee.
+func TestPaymentFailedOnlyAppliesToUnconfirmedHolds(t *testing.T) {
+	cancel := func(b *rentals.Booking) error {
+		_, err := b.Cancel(rentals.CancelRequest{Actor: staff, Scope: identity.ScopeAny, Reason: rentals.CancelPaymentFailed, Note: "ghi chú", Now: now.Add(time.Minute)})
+		return err
+	}
+	confirmed := mustPlace(t).Booking
+	if _, err := confirmed.Confirm(system, funds(60_000, 0, 60_000), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := cancel(confirmed); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("confirmed booking err = %v", err)
+	}
+	if err := cancel(mustPlace(t).Booking); err != nil {
+		t.Fatalf("unconfirmed hold: %v", err)
 	}
 }
 
@@ -77,7 +124,7 @@ func TestCancellationFeeIsOnRentOnlyAndRoundsDown(t *testing.T) {
 		Reason: rentals.CancelCustomerRequest, Now: b.Schedule.PickupAt.Add(-5 * day)}); err != nil {
 		t.Fatal(err)
 	}
-	fee, err := b.CancellationFee()
+	fee, err := b.CancellationFee(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +143,7 @@ func TestCancellationPolicyIsSnapshotted(t *testing.T) {
 		Reason: rentals.CancelCustomerRequest, Now: b.Schedule.PickupAt.Add(-8 * day)}); err != nil {
 		t.Fatal(err)
 	}
-	fee, err := b.CancellationFee()
+	fee, err := b.CancellationFee(true)
 	if err != nil || !fee.Fee.IsZero() {
 		t.Fatalf("fee = %+v, %v; want the agreed 0%%", fee, err)
 	}

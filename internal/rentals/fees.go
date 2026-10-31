@@ -50,12 +50,11 @@ func (s AssessmentStatus) active() bool {
 type AssessmentID string
 
 var (
-	ErrFeeNotAllowed      = domainerr.New(domainerr.KindInvalid, "rentals.fee_not_allowed", "the inspection or item state does not support this fee")
-	ErrDuplicateFee       = domainerr.New(domainerr.KindConflict, "rentals.duplicate_fee", "a fee for the same loss is already recorded for this item")
-	ErrEvidenceRequired   = domainerr.New(domainerr.KindInvalid, "rentals.evidence_required", "evidence is required for this fee")
-	ErrNewDamageUnproven  = domainerr.New(domainerr.KindInvalid, "rentals.new_damage_unproven", "the item had issues at handover; confirm new damage with evidence")
-	ErrApproverMustDiffer = domainerr.New(domainerr.KindForbidden, "rentals.approver_must_differ", "fees above the manager threshold need a different approver")
-	ErrAdjustmentInvalid  = domainerr.New(domainerr.KindInvalid, "rentals.adjustment_invalid", "an adjusted fee must be positive and lower than the original")
+	ErrFeeNotAllowed     = domainerr.New(domainerr.KindInvalid, "rentals.fee_not_allowed", "the inspection or item state does not support this fee")
+	ErrDuplicateFee      = domainerr.New(domainerr.KindConflict, "rentals.duplicate_fee", "a fee for the same loss is already recorded for this item")
+	ErrEvidenceRequired  = domainerr.New(domainerr.KindInvalid, "rentals.evidence_required", "evidence is required for this fee")
+	ErrNewDamageUnproven = domainerr.New(domainerr.KindInvalid, "rentals.new_damage_unproven", "the item had issues at handover; confirm new damage with evidence")
+	ErrAdjustmentInvalid = domainerr.New(domainerr.KindInvalid, "rentals.adjustment_invalid", "an adjusted fee must be positive and lower than the original")
 )
 
 // LateFeeQuote is the late-return fee computed for one item.
@@ -147,7 +146,9 @@ func CountOpenAssessments(as []FeeAssessment) int {
 }
 
 // AssessLateFee records the policy-computed late fee for an item as
-// APPROVED: it involves no discretion. A zero fee records nothing.
+// APPROVED: it involves no discretion. A zero fee records nothing. An item
+// has one late fee whatever became of it: a waived or adjusted fee is a
+// decision that running the assessment again must not undo.
 func (b *Booking) AssessLateFee(existing []FeeAssessment, id AssessmentID, asset inventory.AssetID, affectedNext bool, actor identity.Actor, now time.Time) (FeeAssessment, bool, error) {
 	if !actor.Valid() {
 		return FeeAssessment{}, false, ErrActorRequired
@@ -159,8 +160,8 @@ func (b *Booking) AssessLateFee(existing []FeeAssessment, id AssessmentID, asset
 	if err != nil {
 		return FeeAssessment{}, false, err
 	}
-	if err := checkNoDuplicate(existing, asset, FeeLateReturn); err != nil {
-		return FeeAssessment{}, false, err
+	if slices.ContainsFunc(existing, func(e FeeAssessment) bool { return e.AssetID == asset && e.Kind == FeeLateReturn }) {
+		return FeeAssessment{}, false, fmt.Errorf("asset %s late fee: %w", asset, ErrDuplicateFee)
 	}
 	if !q.Amount.IsPositive() {
 		return FeeAssessment{}, false, nil
@@ -294,7 +295,8 @@ func (b *Booking) newAssessment(id AssessmentID, asset inventory.AssetID, kind F
 }
 
 // Approve accepts a proposed fee. Above the snapshot manager threshold the
-// approver needs fee.approve_high and must not be the proposer.
+// approver needs fee.approve_high; it may be the proposer, so a one-person
+// shop can run (owner decision D31).
 func (a *FeeAssessment) Approve(b *Booking, p identity.Principal, now time.Time) error {
 	if err := p.Require(identity.PermFeeApprove); err != nil {
 		return err
@@ -305,9 +307,6 @@ func (a *FeeAssessment) Approve(b *Booking, p identity.Principal, now time.Time)
 	if a.Amount.Amount() > b.Policy.FeeApproval.ManagerApprovalAbove.Amount() {
 		if err := p.Require(identity.PermFeeApproveHigh); err != nil {
 			return err
-		}
-		if p.Actor() == a.ProposedBy {
-			return ErrApproverMustDiffer
 		}
 	}
 	a.decide(AssessmentApproved, p.Actor(), "", now)

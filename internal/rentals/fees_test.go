@@ -107,6 +107,21 @@ func TestAssessLateFee(t *testing.T) {
 	}
 }
 
+func TestWaivedLateFeeIsNotAssessedAgain(t *testing.T) {
+	b, assets := handedOver(t)
+	_, _ = b.RecordReturn(rentals.ReturnRequest{Actor: staff, Assets: assets[:1], Now: b.Schedule.DueAt.Add(2 * time.Hour)})
+	a, _, err := b.AssessLateFee(nil, "f1", assets[0], false, system, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Waive(principal(t, "fin", identity.RoleFinance), "cửa hàng gây chậm", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := b.AssessLateFee([]rentals.FeeAssessment{a}, "f2", assets[0], false, system, now); created || !errors.Is(err, rentals.ErrDuplicateFee) {
+		t.Fatalf("assessing a waived fee again = %v, %v", created, err)
+	}
+}
+
 func returnedAndInspected(t *testing.T, findings map[int]rentals.InspectionFinding, preexisting string) (*rentals.Booking, []inventory.AssetID) {
 	t.Helper()
 	p := mustPlace(t)
@@ -229,7 +244,6 @@ func TestFeeApprovalAuthority(t *testing.T) {
 	clerk := principal(t, "staff1", identity.RoleRentalStaff)
 	finance := principal(t, "fin1", identity.RoleFinance)
 	owner := principal(t, "owner1", identity.RoleAdmin)
-	owner2 := principal(t, "owner2", identity.RoleAdmin)
 	b, assets := returnedAndInspected(t, map[int]rentals.InspectionFinding{
 		0: {Conditions: []rentals.Condition{rentals.CondMajorRepairable}, Evidence: photo},
 		1: {Conditions: []rentals.Condition{rentals.CondIrreparable}, Evidence: photo},
@@ -246,11 +260,8 @@ func TestFeeApprovalAuthority(t *testing.T) {
 	if err := big.Approve(b, finance, now); !errors.Is(err, identity.ErrForbidden) {
 		t.Fatalf("finance approving above the threshold err = %v", err)
 	}
-	if err := big.Approve(b, owner, now); !errors.Is(err, rentals.ErrApproverMustDiffer) {
-		t.Fatalf("proposer approving a high fee err = %v", err)
-	}
-	if err := big.Approve(b, owner2, now); err != nil {
-		t.Fatalf("second manager approval: %v", err)
+	if err := big.Approve(b, owner, now); err != nil {
+		t.Fatalf("the proposer approving with fee.approve_high (D31): %v", err)
 	}
 }
 

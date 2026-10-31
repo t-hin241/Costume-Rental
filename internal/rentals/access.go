@@ -18,6 +18,7 @@ var bookingPermissions = map[Action]actionPermissions{
 	ActionModify:           {own: identity.PermBookingModifyOwn, any: identity.PermBookingModifyAny},
 	ActionConfirm:          {any: identity.PermBookingConfirm},
 	ActionStartPreparation: {any: identity.PermRentalPrepare},
+	ActionReplaceAsset:     {any: identity.PermRentalPrepare},
 	ActionHandover:         {any: identity.PermRentalHandover},
 	ActionReturn:           {any: identity.PermRentalReturnReceive},
 	ActionReportMissing:    {any: identity.PermRentalReturnReceive},

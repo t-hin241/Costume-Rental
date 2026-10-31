@@ -297,7 +297,7 @@ func (l *Ledger) ReverseCharge(id ChargeID, reason string, actor identity.Actor,
 	if l.Charges[i].Reversal != nil {
 		return fmt.Errorf("charge %s already reversed: %w", id, ErrInvalidTransition)
 	}
-	if slices.ContainsFunc(l.Deductions, func(d Deduction) bool { return d.ChargeID == id && d.Status != DeductionRejected }) {
+	if slices.ContainsFunc(l.Deductions, func(d Deduction) bool { return d.ChargeID == id && d.Status.counts() }) {
 		return fmt.Errorf("charge %s: %w", id, ErrChargeHasDeductions)
 	}
 	l.Charges[i].Reversal = &Reversal{Reason: reason, By: actor, At: now.UTC()}

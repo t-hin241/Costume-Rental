@@ -68,6 +68,10 @@ type Summary struct {
 // pending payments so a second checkout cannot double charge.
 func (s Summary) collectable(b Bucket) int64 {
 	rental := s.RentalOutstanding.Amount() - s.pendingByBucket[BucketRental] - s.ReservationCredit.Amount()
+	if s.creditsRent {
+		// A credited reservation still in checkout will pay rent too.
+		rental -= s.pendingByBucket[BucketReservation]
+	}
 	switch b {
 	case BucketSecurity:
 		return s.SecurityRequired.Amount() - s.SecurityReceived.Amount() - s.pendingByBucket[BucketSecurity]
@@ -83,6 +87,12 @@ func (s Summary) collectable(b Bucket) int64 {
 	return rental
 }
 
+// sharesRentLimit reports whether a bucket draws on the rent still open: the
+// rental bucket, and the reservation bucket when it is credited to rent.
+func (s Summary) sharesRentLimit(b Bucket) bool {
+	return s.creditsRent && (b == BucketRental || b == BucketReservation)
+}
+
 // securityFree is held deposit not reserved by pending deductions/refunds.
 func (s Summary) securityFree() int64 {
 	return s.SecurityHeld.Amount() - s.PendingDeductions.Amount() - s.pendingRefundByBucket[BucketSecurity]
@@ -96,7 +106,27 @@ func (s Summary) refundable(b Bucket) int64 {
 	case BucketReservation:
 		return s.ReservationHeld.Amount() - s.pendingRefundByBucket[BucketReservation]
 	}
-	return -s.RentalOutstanding.Amount() - s.pendingRefundByBucket[BucketRental]
+	v := -s.RentalOutstanding.Amount()
+	if s.creditsRent {
+		// A held reservation will pay rent, so the rent it covers is free,
+		// whatever bucket that money was paid into.
+		v = min(v+s.ReservationHeld.Amount()-s.pendingRefundByBucket[BucketReservation], s.RentalPaid.Amount())
+	}
+	return v - s.pendingRefundByBucket[BucketRental]
+}
+
+// Refundable is what a bucket may still refund, free of pending refunds and
+// deductions: the full position when the booking's money is being closed.
+func (l *Ledger) Refundable(b Bucket) money.Money {
+	return l.money(max(l.Summary().refundable(b), 0))
+}
+
+// ExcessSecurity is the free deposit above what the booking still requires:
+// the part to refund while the rental goes on, e.g. after a modification
+// lowered the deposit or was abandoned once paid.
+func (l *Ledger) ExcessSecurity() money.Money {
+	s := l.Summary()
+	return l.money(max(min(s.securityFree(), s.SecurityHeld.Amount()-s.SecurityRequired.Amount()), 0))
 }
 
 // IsSettled reports whether nothing is owed, nothing is held, and nothing is

@@ -454,7 +454,6 @@ type LossPolicy struct {
 
 // FeeApprovalPolicy sets who may approve discretionary fees.
 type FeeApprovalPolicy struct {
-	// ManagerApprovalAbove: fees strictly above this need fee.approve_high
-	// and an approver other than the proposer.
+	// ManagerApprovalAbove: fees strictly above this need fee.approve_high.
 	ManagerApprovalAbove money.Money
 }

@@ -39,6 +39,21 @@ func TestTwoChangesCannotHoldTheSameReplacement(t *testing.T) {
 	}
 }
 
+func TestChangeReplacesOwnAllocationOnRetiredAsset(t *testing.T) {
+	// JK-M-1 was retired after allocation, so it is no longer a candidate.
+	assets := []inventory.Asset{asset("JK-M-2", "jacket-m", inventory.AssetReady)}
+	own := allocate(t, "a1", "bk-1", inventory.PlannedAllocation{LineRef: "l1", ComponentKey: "item", AssetID: "JK-M-1", VariantID: "jacket-m", Block: block(t, 0, 50*time.Hour)})
+	plan, err := inventory.PlanChange(inventory.ChangeRequest{
+		BookingRef: "bk-1", ModificationRef: "m1", Own: []inventory.Allocation{own},
+		Demands: []inventory.Demand{{LineRef: "l1", ComponentKey: "item", VariantID: "jacket-m", Quantity: 1, Block: block(t, 0, 98*time.Hour)}},
+		Assets:  assets, Allocations: []inventory.Allocation{own}, Now: t0.Add(-72 * time.Hour),
+	})
+	if err != nil || len(plan.Keep) != 0 || len(plan.Reblock) != 0 || len(plan.Hold) != 1 || plan.Hold[0].AssetID != "JK-M-2" ||
+		len(plan.Release) != 1 || plan.Release[0] != "a1" {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+}
+
 func TestChangeKeepsOldAssetUntilConfirmed(t *testing.T) {
 	// Only one jacket M exists and it is ours: shrinking or extending reuses it.
 	assets := []inventory.Asset{asset("JK-M-1", "jacket-m", inventory.AssetReady)}

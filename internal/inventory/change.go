@@ -62,6 +62,10 @@ func PlanChange(req ChangeRequest) (ChangePlan, error) {
 		got := 0
 		for got < d.Quantity {
 			if own, ok := reusable(req.Own, used, d); ok {
+				if !pl.candidate(d.VariantID, own.AssetID) {
+					used[own.ID] = true // retired since allocated; replace it
+					continue
+				}
 				extra := d.Block.Minus(own.Block)
 				if slices.ContainsFunc(extra, func(r period.Range) bool { return !pl.free(own.AssetID, r, own.ID) }) {
 					used[own.ID] = true // cannot stretch it; try another asset

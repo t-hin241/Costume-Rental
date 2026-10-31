@@ -3,6 +3,7 @@ package rentalsapp
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,7 +13,10 @@ import (
 	"webee_rentor/internal/catalog/catalogpg"
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
+	"webee_rentor/internal/inventory"
 	"webee_rentor/internal/inventory/inventorypg"
+	"webee_rentor/internal/payments"
+	"webee_rentor/internal/payments/paymentspg"
 	"webee_rentor/internal/platform/postgres"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalspg"
@@ -100,7 +104,7 @@ func (s *Service) QuoteModification(ctx context.Context, p identity.Principal, i
 				variants = append(variants, comp.VariantID)
 			}
 		}
-		view, err := lockInventory(ctx, tx, variants, cfg.allocation)
+		view, err := lockBookingInventory(ctx, tx, b.ID, variants, cfg.allocation)
 		if err != nil {
 			return rentals.Transition{}, err
 		}
@@ -112,8 +116,109 @@ func (s *Service) QuoteModification(ctx context.Context, p identity.Principal, i
 		if err != nil {
 			return rentals.Transition{}, err
 		}
-		return t, inventorypg.InsertAllocations(ctx, tx, holds)
+		if err := inventorypg.InsertAllocations(ctx, tx, holds); err != nil {
+			return rentals.Transition{}, err
+		}
+		l, lv, err := paymentspg.LoadLedger(ctx, tx, string(b.ID), true)
+		if err != nil {
+			return rentals.Transition{}, err
+		}
+		if _, err := l.StageRepricing(string(m.ID), m.After.Rent, m.After.Security, p.Actor(), now); err != nil {
+			return rentals.Transition{}, err
+		}
+		_, err = paymentspg.SaveLedger(ctx, tx, l, lv, now)
+		return t, err
 	})
+}
+
+// ConfirmModification applies a quoted change once its increase is paid: in
+// one transaction the booking takes the new terms, the holds replace the old
+// allocations and the ledger is re-priced. What the customer overpaid goes to
+// a refund awaiting approval.
+func (s *Service) ConfirmModification(ctx context.Context, p identity.Principal, id rentals.ModificationID) (*rentals.Modification, error) {
+	return s.withModification(ctx, p, id, func(tx pgx.Tx, b *rentals.Booking, m *rentals.Modification, _ identity.Scope, now time.Time) (rentals.Transition, error) {
+		l, lv, err := paymentspg.LoadLedger(ctx, tx, string(b.ID), true)
+		if err != nil {
+			return rentals.Transition{}, err
+		}
+		t, err := m.Confirm(b, p.Actor(), l.PaidForModification(string(m.ID)), now)
+		if err != nil {
+			return rentals.Transition{}, err
+		}
+		if err := applyChangePlan(ctx, tx, m, now); err != nil {
+			return rentals.Transition{}, err
+		}
+		if err := l.CommitRepricing(string(m.ID), payments.ChargeID(s.newID()), payments.ChargeID(s.newID()), p.Actor(), now); err != nil {
+			return rentals.Transition{}, err
+		}
+		if err := s.refundExcess(ctx, tx, l, fmt.Sprintf("booking modification %s", m.ID), p.Actor(), now); err != nil {
+			return rentals.Transition{}, err
+		}
+		_, err = paymentspg.SaveLedger(ctx, tx, l, lv, now)
+		return t, err
+	})
+}
+
+// applyChangePlan moves the allocations to a confirmed plan. Extension holds
+// are released first so reblocking their allocation cannot overlap them.
+func applyChangePlan(ctx context.Context, q postgres.Querier, m *rentals.Modification, now time.Time) error {
+	allocs, err := inventorypg.AllocationsOfBooking(ctx, q, string(m.BookingID), true)
+	if err != nil {
+		return err
+	}
+	if _, err := inventorypg.LockAssets(ctx, q, allocatedAssets(allocs)); err != nil {
+		return err
+	}
+	var extensions, adopted []inventory.AllocationID
+	for _, a := range allocs {
+		switch {
+		case a.ModificationRef != string(m.ID):
+		case a.ExtendsAllocation != "":
+			extensions = append(extensions, a.ID)
+		default:
+			adopted = append(adopted, a.ID)
+		}
+	}
+	if err := releaseByID(ctx, q, allocs, extensions, "modification confirmed", now); err != nil {
+		return err
+	}
+	for _, r := range m.Plan.Reblock {
+		i := slices.IndexFunc(allocs, func(a inventory.Allocation) bool { return a.ID == r.AllocationID })
+		if i < 0 {
+			return fmt.Errorf("allocation %s to reblock: %w", r.AllocationID, postgres.ErrNotFound)
+		}
+		if err := allocs[i].Reblock(r.Block); err != nil {
+			return err
+		}
+		if err := inventorypg.UpdateAllocation(ctx, q, allocs[i]); err != nil {
+			return err
+		}
+	}
+	for _, id := range adopted {
+		i := slices.IndexFunc(allocs, func(a inventory.Allocation) bool { return a.ID == id })
+		if err := allocs[i].Adopt(); err != nil {
+			return err
+		}
+		if err := inventorypg.UpdateAllocation(ctx, q, allocs[i]); err != nil {
+			return err
+		}
+	}
+	return releaseByID(ctx, q, allocs, m.Plan.Release, "modification confirmed", now)
+}
+
+// dropRepricing discards the staged prices of a change that ended without
+// applying; money already paid for it goes to a refund awaiting approval.
+func (s *Service) dropRepricing(ctx context.Context, q postgres.Querier, m *rentals.Modification, actor identity.Actor, now time.Time) error {
+	l, lv, err := paymentspg.LoadLedger(ctx, q, string(m.BookingID), true)
+	if err != nil {
+		return err
+	}
+	l.DiscardRepricing(string(m.ID))
+	if err := s.refundExcess(ctx, q, l, fmt.Sprintf("booking modification %s ended", m.ID), actor, now); err != nil {
+		return err
+	}
+	_, err = paymentspg.SaveLedger(ctx, q, l, lv, now)
+	return err
 }
 
 // ModificationOutcome ends an open change request without applying it.
@@ -129,20 +234,27 @@ const (
 // EndModification rejects or withdraws a change request and releases its
 // holds; the booking keeps its terms and allocations.
 func (s *Service) EndModification(ctx context.Context, p identity.Principal, id rentals.ModificationID, outcome ModificationOutcome, note string) (*rentals.Modification, error) {
-	return s.withModification(ctx, p, id, func(_ pgx.Tx, b *rentals.Booking, m *rentals.Modification, scope identity.Scope, now time.Time) (rentals.Transition, error) {
+	return s.withModification(ctx, p, id, func(tx pgx.Tx, b *rentals.Booking, m *rentals.Modification, scope identity.Scope, now time.Time) (rentals.Transition, error) {
+		var t rentals.Transition
+		var err error
 		switch outcome {
 		case ModificationRejected:
 			if scope != identity.ScopeAny {
 				return rentals.Transition{}, fmt.Errorf("reject modification %s: %w", id, identity.ErrForbidden)
 			}
-			return m.Reject(b, p.Actor(), note, now)
+			t, err = m.Reject(b, p.Actor(), note, now)
 		case ModificationWithdrawn:
 			if strings.TrimSpace(note) == "" {
 				note = "withdrawn"
 			}
-			return m.Cancel(b, p.Actor(), note, now)
+			t, err = m.Cancel(b, p.Actor(), note, now)
+		default:
+			return rentals.Transition{}, domainerr.Invalid("outcome", "must be REJECT or CANCEL")
 		}
-		return rentals.Transition{}, domainerr.Invalid("outcome", "must be REJECT or CANCEL")
+		if err != nil {
+			return rentals.Transition{}, err
+		}
+		return t, s.dropRepricing(ctx, tx, m, p.Actor(), now)
 	})
 }
 
@@ -153,8 +265,7 @@ func (s *Service) ExpireModificationHolds(ctx context.Context, limit int) (int, 
 	if err != nil {
 		return 0, err
 	}
-	expired := 0
-	for _, id := range due {
+	return expireEach(ctx, due, func(id rentals.ModificationID) (bool, error) {
 		changed := false
 		err := s.inModification(ctx, id, func(tx pgx.Tx, b *rentals.Booking, m *rentals.Modification, now time.Time) (*rentals.Transition, error) {
 			t, ok, err := m.Expire(b, jobActor, now)
@@ -162,16 +273,10 @@ func (s *Service) ExpireModificationHolds(ctx context.Context, limit int) (int, 
 			if err != nil || !ok {
 				return nil, err
 			}
-			return &t, nil
+			return &t, s.dropRepricing(ctx, tx, m, jobActor, now)
 		})
-		if err != nil {
-			return expired, fmt.Errorf("expire modification %s: %w", id, err)
-		}
-		if changed {
-			expired++
-		}
-	}
-	return expired, nil
+		return changed, err
+	})
 }
 
 type modChange func(tx pgx.Tx, b *rentals.Booking, m *rentals.Modification, scope identity.Scope, now time.Time) (rentals.Transition, error)

@@ -99,6 +99,9 @@ func (s *Service) place(ctx context.Context, p identity.Principal, in PlaceInput
 		if err := inventorypg.InsertAllocations(ctx, tx, allocs); err != nil {
 			return err
 		}
+		if err := s.openLedger(ctx, tx, pl.Booking, p.Actor(), now); err != nil {
+			return err
+		}
 		if err := s.record(ctx, tx, pl.Transition); err != nil {
 			return err
 		}

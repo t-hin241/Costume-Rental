@@ -55,7 +55,8 @@ type Payment struct {
 	SettledAt      *time.Time
 	FailureReason  string
 	// NeedsReview flags a success that arrived after we had given up
-	// (expired/failed), which may mean an overpayment to refund.
+	// (expired/failed) or after the booking was cancelled, which may mean an
+	// overpayment to refund.
 	NeedsReview bool
 	// ModificationRef tags a payment collecting a booking modification's
 	// increase.
@@ -119,7 +120,7 @@ func (l *Ledger) addPayment(req NewPaymentRequest, status PaymentStatus) (Paymen
 		return Payment{}, false, domainerr.Invalid("portions", "at least one portion is required")
 	}
 	s := l.Summary()
-	var total int64
+	var total, rentClaimed int64
 	seen := map[Bucket]bool{}
 	for _, pt := range req.Portions {
 		if !pt.Bucket.valid() || seen[pt.Bucket] {
@@ -130,11 +131,17 @@ func (l *Ledger) addPayment(req NewPaymentRequest, status PaymentStatus) (Paymen
 			return Payment{}, false, err
 		}
 		limit := s.collectable(pt.Bucket)
-		if req.ModificationRef != "" {
+		switch {
+		case req.ModificationRef != "":
 			var err error
 			if limit, err = l.collectableForModification(req.ModificationRef, pt.Bucket); err != nil {
 				return Payment{}, false, err
 			}
+		case s.sharesRentLimit(pt.Bucket):
+			// Portions of one payment share the same rent still open, in
+			// whatever order they are listed.
+			limit = min(limit, s.collectable(BucketRental)-rentClaimed)
+			rentClaimed += pt.Amount.Amount()
 		}
 		if pt.Amount.Amount() > limit {
 			return Payment{}, false, fmt.Errorf("%s portion %s: %w", pt.Bucket, pt.Amount, ErrExceedsOutstanding)
@@ -169,6 +176,16 @@ func (l *Ledger) ExpirePayment(id PaymentID, now time.Time) (bool, error) {
 	return true, nil
 }
 
+// ExpirePendingPayments stops waiting for every pending payment, as when the
+// booking ended. A later success is still recorded, flagged for review.
+func (l *Ledger) ExpirePendingPayments(now time.Time) {
+	for i := range l.Payments {
+		if p := &l.Payments[i]; p.Status == PaymentPending {
+			p.Status, p.SettledAt = PaymentExpired, ptr(now)
+		}
+	}
+}
+
 // EventStatus is the provider-reported outcome.
 type EventStatus string
 
@@ -195,8 +212,8 @@ type Outcome string
 
 const (
 	OutcomeApplied Outcome = "APPLIED"
-	// OutcomeAppliedNeedsReview: success after expiry/failure; finance must
-	// review and refund any overpayment.
+	// OutcomeAppliedNeedsReview: success after expiry/failure or on a cancelled
+	// booking; finance must review and refund any overpayment.
 	OutcomeAppliedNeedsReview Outcome = "APPLIED_NEEDS_REVIEW"
 	OutcomeDuplicate          Outcome = "DUPLICATE"
 	OutcomeNoChange           Outcome = "NO_CHANGE"
@@ -234,11 +251,13 @@ func (l *Ledger) ApplyPaymentEvent(e PaymentEvent) (Outcome, error) {
 				return "", fmt.Errorf("payment %s txn %s: %w", p.ID, e.ProviderTxnID, ErrProviderMismatch)
 			}
 			outcome = OutcomeNoChange
-		case PaymentExpired, PaymentFailed:
-			outcome = OutcomeAppliedNeedsReview
-			p.NeedsReview = true
-			fallthrough
-		case PaymentPending:
+		case PaymentExpired, PaymentFailed, PaymentPending:
+			// Money for a cancelled booking is never an ordinary success: the
+			// booking must not resume, and finance has to refund it.
+			if p.Status != PaymentPending || l.Cancellation != nil {
+				outcome = OutcomeAppliedNeedsReview
+				p.NeedsReview = true
+			}
 			p.Status, p.ProviderTxnID, p.SettledAt, p.FailureReason = PaymentSucceeded, e.ProviderTxnID, ptr(e.OccurredAt), ""
 		}
 	case EventFailed:

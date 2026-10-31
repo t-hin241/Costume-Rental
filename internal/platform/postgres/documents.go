@@ -16,6 +16,7 @@ const (
 	DocRentalPolicy     DocumentKind = "RENTAL"
 	DocAllocationPolicy DocumentKind = "INVENTORY_ALLOCATION"
 	DocPermissionMatrix DocumentKind = "PERMISSION_MATRIX"
+	DocPaymentApproval  DocumentKind = "PAYMENT_APPROVAL"
 )
 
 // SaveDocument stores a new immutable policy version and, when activate is

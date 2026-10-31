@@ -43,14 +43,24 @@ type Refund struct {
 	DecisionNote   string
 	Provider       string
 	ProviderRef    string
-	CompletedAt    *time.Time
-	FailureReason  string
+	// CompletedAt is when the money actually moved, which for a counter
+	// refund can be before it was entered.
+	CompletedAt   *time.Time
+	FailureReason string
+	// Counter refunds keep how the money went back and who entered it.
+	Method     Method
+	Reference  string
+	RecordedBy *identity.Actor
+	RecordedAt *time.Time
 }
 
 // RequestRefund creates a refund awaiting approval. The amount is reserved
-// immediately so concurrent requests cannot over-refund.
+// immediately so concurrent requests cannot over-refund. A system actor may
+// request (the hold-expiry job does); approval always takes a user. While a
+// repricing is staged no refund starts: money collected for it must stay put
+// until the modification is confirmed or discarded.
 func (l *Ledger) RequestRefund(id RefundID, idempotencyKey string, bucket Bucket, amount money.Money, reason string, actor identity.Actor, now time.Time) (Refund, bool, error) {
-	if !actor.IsUser() {
+	if !actor.Valid() {
 		return Refund{}, false, ErrActorRequired
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
@@ -62,6 +72,9 @@ func (l *Ledger) RequestRefund(id RefundID, idempotencyKey string, bucket Bucket
 			return Refund{}, false, ErrIdempotencyConflict
 		}
 		return r, false, nil
+	}
+	if l.Staged != nil {
+		return Refund{}, false, fmt.Errorf("refund during repricing %s: %w", l.Staged.Ref, ErrRepricingConflict)
 	}
 	if id == "" || slices.ContainsFunc(l.Refunds, func(r Refund) bool { return r.ID == id }) {
 		return Refund{}, false, domainerr.Invalid("refund_id", "required and unique")
@@ -142,19 +155,43 @@ func (l *Ledger) MarkRefundSubmitted(id RefundID, provider, providerRef string) 
 	return nil
 }
 
-// RecordCounterRefund records money handed back at the counter.
-func (l *Ledger) RecordCounterRefund(id RefundID, actor identity.Actor, now time.Time) error {
+// RefundPayout is how money went back outside any provider.
+type RefundPayout struct {
+	Method Method
+	// Reference is the receipt code, or the bank's transaction code, which a
+	// transfer must have.
+	Reference string
+	// PaidAt is when the money moved; it may be before it is entered.
+	PaidAt time.Time
+}
+
+// RecordCounterRefund records money handed back in cash or by manual transfer.
+// The money moves outside the system, so this confirmation is all it takes,
+// whatever the amount, and a one-person shop can run (owner decisions D30,
+// D32). A transfer must name its bank transaction, to reconcile with the
+// statement. Refunds through a provider still need approval first.
+func (l *Ledger) RecordCounterRefund(id RefundID, payout RefundPayout, actor identity.Actor, now time.Time) error {
 	if !actor.IsUser() {
 		return ErrActorRequired
+	}
+	if payout.Method != MethodCash && payout.Method != MethodBankTransfer {
+		return domainerr.Invalid("method", "counter refunds are cash or bank transfer")
+	}
+	if payout.Method == MethodBankTransfer && strings.TrimSpace(payout.Reference) == "" {
+		return domainerr.Invalid("reference", "a transfer needs its bank transaction code")
+	}
+	if payout.PaidAt.IsZero() || payout.PaidAt.After(now) {
+		return domainerr.Invalid("paid_at", "required and not in the future")
 	}
 	r, err := l.refund(id)
 	if err != nil {
 		return err
 	}
-	if r.Status != RefundApproved {
+	if r.Status != RefundApproved && r.Status != RefundRequested {
 		return fmt.Errorf("refund %s %s: %w", id, r.Status, ErrInvalidTransition)
 	}
-	r.Status, r.CompletedAt = RefundSucceeded, ptr(now)
+	r.Status, r.CompletedAt = RefundSucceeded, ptr(payout.PaidAt)
+	r.Method, r.Reference, r.RecordedBy, r.RecordedAt = payout.Method, payout.Reference, &actor, ptr(now)
 	return nil
 }
 
