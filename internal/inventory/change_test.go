@@ -54,6 +54,30 @@ func TestChangeReplacesOwnAllocationOnRetiredAsset(t *testing.T) {
 	}
 }
 
+func TestRentedAssetCanStillBeExtendedByItsOwnBooking(t *testing.T) {
+	// Decision D33: an asset that is out takes no new bookings, but the customer
+	// holding it can extend, because the allocation is already theirs.
+	assets := []inventory.Asset{asset("JK-M-1", "jacket-m", inventory.AssetRented)}
+	own := allocate(t, "a1", "bk-1", inventory.PlannedAllocation{LineRef: "l1", ComponentKey: "item", AssetID: "JK-M-1", VariantID: "jacket-m", Block: block(t, 0, 50*time.Hour)})
+	demand := inventory.Demand{LineRef: "l1", ComponentKey: "item", VariantID: "jacket-m", Quantity: 1, Block: block(t, 0, 98*time.Hour)}
+
+	plan, err := inventory.PlanChange(inventory.ChangeRequest{
+		BookingRef: "bk-1", ModificationRef: "m1", Own: []inventory.Allocation{own}, Demands: []inventory.Demand{demand},
+		Assets: assets, Allocations: []inventory.Allocation{own}, Now: t0,
+	})
+	if err != nil || len(plan.Reblock) != 1 || len(plan.Hold) != 1 || plan.Hold[0].AssetID != "JK-M-1" || len(plan.Release) != 0 {
+		t.Fatalf("plan = %+v, %v", plan, err)
+	}
+
+	_, err = inventory.PlanChange(inventory.ChangeRequest{
+		BookingRef: "bk-2", ModificationRef: "m2", Demands: []inventory.Demand{demand},
+		Assets: assets, Now: t0,
+	})
+	if !errors.Is(err, inventory.ErrInsufficientInventory) {
+		t.Fatalf("another booking must not get the rented asset, err = %v", err)
+	}
+}
+
 func TestChangeKeepsOldAssetUntilConfirmed(t *testing.T) {
 	// Only one jacket M exists and it is ours: shrinking or extending reuses it.
 	assets := []inventory.Asset{asset("JK-M-1", "jacket-m", inventory.AssetReady)}

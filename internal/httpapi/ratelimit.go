@@ -27,6 +27,7 @@ type RateLimits struct {
 	VerifyConfirmPerIP   ratelimit.Rate
 	MFAPerIP             ratelimit.Rate // second login step and its enrolment
 	MFAPerUser           ratelimit.Rate // setup, confirm and disable while signed in
+	QuotePerIP           ratelimit.Rate // public availability checks and quotes
 }
 
 // DefaultRateLimits returns the approved limits.
@@ -44,12 +45,13 @@ func DefaultRateLimits() RateLimits {
 		VerifyConfirmPerIP:   ratelimit.Rate{N: 10, Window: 15 * time.Minute},
 		MFAPerIP:             ratelimit.Rate{N: 20, Window: 15 * time.Minute},
 		MFAPerUser:           ratelimit.Rate{N: 10, Window: 15 * time.Minute},
+		QuotePerIP:           ratelimit.Rate{N: 120, Window: time.Minute},
 	}
 }
 
 func (l RateLimits) all() []ratelimit.Rate {
 	return []ratelimit.Rate{l.LoginPerIP, l.LoginPerEmail, l.RegisterPerIP, l.ResetPerIP, l.ResetPerEmail, l.ResetConfirmIP,
-		l.PasswordPerUser, l.VerifyResendPerIP, l.VerifyResendPerEmail, l.VerifyConfirmPerIP, l.MFAPerIP, l.MFAPerUser}
+		l.PasswordPerUser, l.VerifyResendPerIP, l.VerifyResendPerEmail, l.VerifyConfirmPerIP, l.MFAPerIP, l.MFAPerUser, l.QuotePerIP}
 }
 
 // LongestWindow is how long counters must be kept.

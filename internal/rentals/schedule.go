@@ -130,6 +130,15 @@ func (c *StoreCalendar) SetRecurringClosures(days []businesstime.MonthDay) error
 	return nil
 }
 
+// Day reports whether the store opens on a local date and its counter slots.
+func (c *StoreCalendar) Day(d businesstime.Date) (bool, []Slot) {
+	if c.isClosed(d) {
+		return false, nil
+	}
+	slots := c.weekly[d.Weekday()]
+	return len(slots) > 0, slices.Clone(slots)
+}
+
 // isClosed reports whether the store is closed on a local date.
 func (c *StoreCalendar) isClosed(d businesstime.Date) bool {
 	return c.closed[d] || c.recurring[d.MonthDay()]

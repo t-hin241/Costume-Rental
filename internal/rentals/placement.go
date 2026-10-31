@@ -71,62 +71,86 @@ type Placement struct {
 // PlaceBooking validates the request against the policy, snapshots prices
 // and composition, and plans allocations for every component, all or nothing.
 func PlaceBooking(req PlaceRequest) (Placement, error) {
-	if err := req.Policy.Validate(); err != nil {
+	b, err := Quote(req)
+	if err != nil {
 		return Placement{}, err
+	}
+	demands, err := b.Demands(b.Schedule, b.Fulfillment)
+	if err != nil {
+		return Placement{}, err
+	}
+	planned, err := inventory.Plan(inventory.PlanRequest{
+		BookingRef: string(b.ID), Demands: demands,
+		Assets: req.Inventory.Assets, Allocations: req.Inventory.Allocations,
+		Now: req.Now, Policy: req.Inventory.Policy,
+	})
+	if err != nil {
+		return Placement{}, fmt.Errorf("place booking %s: %w", b.ID, err)
+	}
+	t := Transition{BookingID: b.ID, Action: ActionCreate, To: b.Status, Actor: req.Actor, At: req.Now.UTC()}
+	return Placement{Booking: b, Allocations: planned, Transition: t}, nil
+}
+
+// Quote validates the request and builds the booking it would create, with
+// every amount, without touching inventory. Nothing is held: PlaceBooking
+// checks stock under lock.
+func Quote(req PlaceRequest) (*Booking, error) {
+	if err := req.Policy.Validate(); err != nil {
+		return nil, err
 	}
 	switch {
 	case req.BookingID == "":
-		return Placement{}, domainerr.Invalid("booking_id", "required")
+		return nil, domainerr.Invalid("booking_id", "required")
 	case strings.TrimSpace(req.Code) == "":
-		return Placement{}, domainerr.Invalid("code", "required")
+		return nil, domainerr.Invalid("code", "required")
 	case req.CustomerID == "":
-		return Placement{}, domainerr.Invalid("customer_id", "required")
+		return nil, domainerr.Invalid("customer_id", "required")
 	case !req.Actor.Valid():
-		return Placement{}, ErrActorRequired
+		return nil, ErrActorRequired
 	case len(req.Lines) == 0:
-		return Placement{}, domainerr.Invalid("lines", "at least one line is required")
+		return nil, domainerr.Invalid("lines", "at least one line is required")
 	case len(req.Lines) > req.Policy.MaxLinesPerBooking:
-		return Placement{}, domainerr.Invalid("lines", fmt.Sprintf("at most %d lines", req.Policy.MaxLinesPerBooking))
+		return nil, domainerr.Invalid("lines", fmt.Sprintf("at most %d lines", req.Policy.MaxLinesPerBooking))
 	}
 	if req.Calendar == nil {
-		return Placement{}, domainerr.Invalid("calendar", "required")
+		return nil, domainerr.Invalid("calendar", "required")
 	}
 	if err := checkScheduleWindow(req.Schedule, req.Policy, req.Now); err != nil {
-		return Placement{}, err
+		return nil, err
 	}
 
 	pkg := req.Lines[0].Quote.Package
 	if req.Schedule.Duration() != pkg.Duration {
-		return Placement{}, fmt.Errorf("schedule %s vs package %s: %w", req.Schedule.Duration(), pkg.Duration, ErrDurationMismatch)
+		return nil, fmt.Errorf("schedule %s vs package %s: %w", req.Schedule.Duration(), pkg.Duration, ErrDurationMismatch)
 	}
 	currency := req.Lines[0].Quote.RentAmount.Currency()
 	lines := make([]Line, 0, len(req.Lines))
 	seen := map[LineID]bool{}
 	if req.Pricing != nil && len(req.Pricing.Lines) != len(req.Lines) {
-		return Placement{}, fmt.Errorf("pricing has %d lines for %d: %w", len(req.Pricing.Lines), len(req.Lines), ErrPricingMismatch)
+		return nil, fmt.Errorf("pricing has %d lines for %d: %w", len(req.Pricing.Lines), len(req.Lines), ErrPricingMismatch)
 	}
 	var lists, deposits []money.Money
 	for _, lr := range req.Lines {
 		q := lr.Quote.Clone()
 		switch {
 		case lr.ID == "" || seen[lr.ID]:
-			return Placement{}, domainerr.Invalid("lines", "line ids must be present and unique")
+			return nil, domainerr.Invalid("lines", "line ids must be present and unique")
 		case q.Package.ID != pkg.ID:
-			return Placement{}, ErrMixedPackages
+			return nil, ErrMixedPackages
 		case q.Quantity < 1 || q.Quantity > req.Policy.MaxQuantityPerLine:
-			return Placement{}, domainerr.Invalid("quantity", fmt.Sprintf("must be between 1 and %d", req.Policy.MaxQuantityPerLine))
+			return nil, domainerr.Invalid("quantity", fmt.Sprintf("must be between 1 and %d", req.Policy.MaxQuantityPerLine))
 		case len(q.Components) == 0:
-			return Placement{}, domainerr.Invalid("lines", "quote has no components")
+			return nil, domainerr.Invalid("lines", "quote has no components")
 		}
 		seen[lr.ID] = true
 		line, err := lineFromQuote(lr.ID, q)
 		if err != nil {
-			return Placement{}, err
+			return nil, err
 		}
 		if req.Pricing != nil {
 			pr, ok := req.Pricing.Line(string(lr.ID))
 			if !ok || !pr.Subtotal.Equal(q.RentAmount) {
-				return Placement{}, fmt.Errorf("line %s: %w", lr.ID, ErrPricingMismatch)
+				return nil, fmt.Errorf("line %s: %w", lr.ID, ErrPricingMismatch)
 			}
 			line.Discount, line.RentAmount = pr.Discount, pr.Net
 		}
@@ -136,24 +160,24 @@ func PlaceBooking(req PlaceRequest) (Placement, error) {
 	}
 	grossTotal, err := money.Sum(currency, lists...)
 	if err != nil {
-		return Placement{}, fmt.Errorf("rent total: %w", err)
+		return nil, fmt.Errorf("rent total: %w", err)
 	}
 	rentTotal, _, err := totals(lines, currency)
 	if err != nil {
-		return Placement{}, fmt.Errorf("rent total: %w", err)
+		return nil, fmt.Errorf("rent total: %w", err)
 	}
 	depositTotal, err := money.Sum(currency, deposits...)
 	if err != nil {
-		return Placement{}, fmt.Errorf("deposit total: %w", err)
+		return nil, fmt.Errorf("deposit total: %w", err)
 	}
 	fulfillment, err := newFulfillment(req.Fulfillment, req.Schedule, req.Calendar, currency)
 	if err != nil {
-		return Placement{}, err
+		return nil, err
 	}
 	reservation := money.Zero(currency)
 	if req.Policy.Reservation.Kind != ReservationNone {
 		if reservation, err = req.Policy.Reservation.amountFor(rentTotal); err != nil {
-			return Placement{}, fmt.Errorf("reservation deposit: %w", err)
+			return nil, fmt.Errorf("reservation deposit: %w", err)
 		}
 	}
 
@@ -169,24 +193,11 @@ func PlaceBooking(req PlaceRequest) (Placement, error) {
 		CreatedAt:     req.Now.UTC(),
 		HoldExpiresAt: req.Now.Add(req.Policy.HoldTTL).UTC(),
 	}
-	demands, err := b.Demands(b.Schedule, b.Fulfillment)
-	if err != nil {
-		return Placement{}, err
-	}
-	planned, err := inventory.Plan(inventory.PlanRequest{
-		BookingRef: string(b.ID), Demands: demands,
-		Assets: req.Inventory.Assets, Allocations: req.Inventory.Allocations,
-		Now: req.Now, Policy: req.Inventory.Policy,
-	})
-	if err != nil {
-		return Placement{}, fmt.Errorf("place booking %s: %w", b.ID, err)
-	}
 	if req.Pricing != nil {
 		b.Discounts = slices.Clone(req.Pricing.Applied)
 		b.ManualAdjustments = slices.Clone(req.Pricing.Manual)
 	}
-	t := Transition{BookingID: b.ID, Action: ActionCreate, To: b.Status, Actor: req.Actor, At: req.Now.UTC()}
-	return Placement{Booking: b, Allocations: planned, Transition: t}, nil
+	return b, nil
 }
 
 // Demands lists the inventory needed for schedule s and fulfillment f, using

@@ -13,6 +13,38 @@ import (
 // UserStatus is the account state.
 type UserStatus string
 
+// Contact is how staff address a customer. Name and Phone are empty until the
+// customer fills in their profile.
+type Contact struct {
+	Name  string
+	Email string
+	Phone string
+}
+
+// ValidPhone accepts what people write as a phone number: 8 to 15 digits with
+// the usual separators.
+func ValidPhone(s string) bool {
+	digits := 0
+	for i, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == '+' && i == 0, r == ' ', r == '-', r == '.', r == '(', r == ')':
+		default:
+			return false
+		}
+	}
+	return digits >= 8 && digits <= 15
+}
+
+// Label names the person for lists and history.
+func (c Contact) Label() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.Email
+}
+
 const (
 	UserActive UserStatus = "ACTIVE"
 	UserLocked UserStatus = "LOCKED"

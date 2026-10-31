@@ -102,9 +102,9 @@ func (b *Booking) QuoteLateFee(asset inventory.AssetID, affectedNext bool) (Late
 	if err != nil {
 		return LateFeeQuote{}, fmt.Errorf("late fee: %w", err)
 	}
-	basis := fmt.Sprintf("returned %s after due; %d%% of daily rate %s (policy %s)", late, pct, it.DailyRate, b.Policy.Version)
+	basis := fmt.Sprintf("Trả sau hạn %d phút; %d%% giá thuê ngày %s (chính sách %s)", int(late.Minutes()), pct, it.DailyRate, b.Policy.Version)
 	if affectedNext {
-		basis += "; affected next booking"
+		basis += "; ảnh hưởng đơn kế tiếp"
 	}
 	return LateFeeQuote{AssetID: asset, Lateness: late, Percent: pct, DailyRate: it.DailyRate, Amount: amount, Basis: basis}, nil
 }

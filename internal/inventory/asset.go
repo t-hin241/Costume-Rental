@@ -137,6 +137,12 @@ func (a *Asset) ReceiveReturn(actor identity.Actor, at time.Time) (StatusChange,
 	return a.apply(ActionReceiveReturn, actor, at, "")
 }
 
+// Allows reports whether the action can happen from the asset's status.
+func (a Asset) Allows(action AssetAction) bool {
+	rule, ok := assetRules[action]
+	return ok && slices.Contains(rule.from, a.Status)
+}
+
 // InspectionChecklist captures the inspection result. The criteria behind
 // each flag are store policy (pending owner decision).
 type InspectionChecklist struct {

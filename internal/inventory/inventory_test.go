@@ -210,6 +210,19 @@ func TestStatusEligibility(t *testing.T) {
 	}
 }
 
+func TestNotReadyAssetsAreOutOfStockByDefault(t *testing.T) {
+	// Decision D33: what is available for rent never exceeds what is ready.
+	far := block(t, 30*day, 31*day)
+	demand := []inventory.Demand{{LineRef: "l", ComponentKey: "item", VariantID: "jacket-m", Quantity: 1, Block: far}}
+	for _, s := range []inventory.AssetStatus{inventory.AssetRented, inventory.AssetNeedsInspection, inventory.AssetCleaning} {
+		_, err := inventory.Plan(inventory.PlanRequest{BookingRef: "b", Now: t0, Policy: inventory.AllocationPolicy{},
+			Assets: []inventory.Asset{asset("x", "jacket-m", s)}, Demands: demand})
+		if !errors.Is(err, inventory.ErrInsufficientInventory) {
+			t.Errorf("%s must not count as available even a month ahead, err = %v", s, err)
+		}
+	}
+}
+
 func TestLateReturnBlocksUntilReturned(t *testing.T) {
 	assets := []inventory.Asset{asset("JK-M-1", "jacket-m", inventory.AssetRented)}
 	out := allocate(t, "a1", "b1", inventory.PlannedAllocation{AssetID: "JK-M-1", VariantID: "jacket-m", Block: block(t, 0, 50*time.Hour)})

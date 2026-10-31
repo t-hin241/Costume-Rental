@@ -16,6 +16,8 @@ import (
 	"webee_rentor/internal/inventory/inventorypg"
 	"webee_rentor/internal/platform/ids"
 	"webee_rentor/internal/platform/postgres"
+	"webee_rentor/internal/promotions"
+	"webee_rentor/internal/promotions/promotionspg"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalspg"
 )
@@ -45,6 +47,8 @@ type PlaceInput struct {
 	Outbound   rentals.LegMode
 	Return     rentals.LegMode
 	Lines      []LineInput
+	// CouponCode is what the customer typed; the campaign comes from storage.
+	CouponCode string
 }
 
 // errCourierNotWired: courier legs need the delivery zone resolution from
@@ -102,6 +106,14 @@ func (s *Service) place(ctx context.Context, p identity.Principal, in PlaceInput
 		if err := s.openLedger(ctx, tx, pl.Booking, p.Actor(), now); err != nil {
 			return err
 		}
+		used, err := promotions.Redeem(func(promotions.CampaignID) promotions.RedemptionID { return promotions.RedemptionID(s.newID()) },
+			pl.Booking.Discounts, string(pl.Booking.ID), p.UserID, now)
+		if err != nil {
+			return err
+		}
+		if err := promotionspg.InsertRedemptions(ctx, tx, used); err != nil {
+			return err
+		}
 		if err := s.record(ctx, tx, pl.Transition); err != nil {
 			return err
 		}
@@ -148,6 +160,11 @@ func (s *Service) placeRequest(ctx context.Context, q postgres.Querier, p identi
 	if err != nil {
 		return rentals.PlaceRequest{}, err
 	}
+	// Campaigns are locked before assets, the same order everywhere.
+	pricing, err := s.price(ctx, q, p.UserID, in.CouponCode, lines, lock)
+	if err != nil {
+		return rentals.PlaceRequest{}, err
+	}
 	var variants []catalog.VariantID
 	for _, l := range lines {
 		for _, c := range l.Quote.Components {
@@ -167,8 +184,40 @@ func (s *Service) placeRequest(ctx context.Context, q postgres.Querier, p identi
 		BookingID: rentals.BookingID(s.newID()), Code: ids.Code("BK", 8), CustomerID: p.UserID, Actor: p.Actor(),
 		Schedule: schedule, Calendar: cfg.calendar, Lines: lines,
 		Fulfillment: rentals.FulfillmentRequest{Outbound: in.Outbound, Return: in.Return},
-		Policy:      cfg.policy, Inventory: view,
+		Pricing:     pricing, Policy: cfg.policy, Inventory: view,
 	}, nil
+}
+
+// price applies the store's campaigns and the coupon to the lines. No campaign
+// and no coupon means no pricing result, as with a booking without discounts.
+func (s *Service) price(ctx context.Context, q postgres.Querier, customer identity.UserID, coupon string, lines []rentals.LineRequest, lock bool) (*promotions.Result, error) {
+	code := promotions.NormalizeCode(coupon)
+	campaigns, err := promotionspg.ForPricing(ctx, q, code, lock)
+	if err != nil {
+		return nil, err
+	}
+	if len(campaigns) == 0 && code == "" {
+		return nil, nil
+	}
+	req := promotions.Request{Currency: lines[0].Quote.RentAmount.Currency(), Customer: promotions.Customer{ID: customer}, CouponCode: code, Now: s.now().UTC()}
+	for i := range campaigns {
+		if campaigns[i].Type == promotions.TypeCoupon {
+			req.Coupon = &campaigns[i]
+		} else {
+			req.Automatic = append(req.Automatic, campaigns[i])
+		}
+	}
+	for _, l := range lines {
+		req.Lines = append(req.Lines, promotions.Line{ID: string(l.ID), Kind: l.Quote.Kind, OfferingID: l.Quote.OfferingID, Subtotal: l.Quote.RentAmount})
+	}
+	if req.Usage, err = promotionspg.Usage(ctx, q, customer); err != nil {
+		return nil, err
+	}
+	res, err := promotions.Price(req)
+	if err != nil {
+		return nil, err
+	}
+	return &res, nil
 }
 
 func readInventory(ctx context.Context, q postgres.Querier, variants []catalog.VariantID, policy inventory.AllocationPolicy) (rentals.InventoryView, error) {
@@ -239,12 +288,14 @@ func quoteLines(ctx context.Context, q postgres.Querier, pkg catalog.RentalPacka
 type Availability struct {
 	Available bool
 	Shortages []inventory.Shortage
+	Schedule  rentals.Schedule
 }
 
 // CheckAvailability runs the placement rules on a consistent read-only
 // snapshot without locking or writing anything.
 func (s *Service) CheckAvailability(ctx context.Context, in PlaceInput) (Availability, error) {
 	var out Availability
+	in.CouponCode = "" // stock does not depend on a discount
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		guest := identity.Principal{UserID: "availability-check"}
 		req, err := s.placeRequest(ctx, tx, guest, in, false)
@@ -252,6 +303,7 @@ func (s *Service) CheckAvailability(ctx context.Context, in PlaceInput) (Availab
 			return err
 		}
 		req.Actor, req.Now = jobActor, s.now().UTC()
+		out.Schedule = req.Schedule
 		_, err = rentals.PlaceBooking(req)
 		var short *inventory.ShortageError
 		switch {
@@ -266,6 +318,42 @@ func (s *Service) CheckAvailability(ctx context.Context, in PlaceInput) (Availab
 	})
 	if err != nil {
 		return Availability{}, fmt.Errorf("check availability: %w", err)
+	}
+	return out, nil
+}
+
+// QuoteResult is what a request would cost, with nothing reserved.
+type QuoteResult struct {
+	Booking  *rentals.Booking
+	Variants map[catalog.VariantID]catalogpg.VariantInfo
+}
+
+// Quote prices a request exactly as PlaceBooking would, on a consistent
+// read-only snapshot. Guests may quote, so the coupon's per-customer limit is
+// only enforced when placing.
+func (s *Service) Quote(ctx context.Context, in PlaceInput) (QuoteResult, error) {
+	var out QuoteResult
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		guest := identity.Principal{UserID: "quote"}
+		req, err := s.placeRequest(ctx, tx, guest, in, false)
+		if err != nil {
+			return err
+		}
+		req.Actor, req.Now = jobActor, s.now().UTC()
+		if out.Booking, err = rentals.Quote(req); err != nil {
+			return err
+		}
+		var variants []catalog.VariantID
+		for _, l := range out.Booking.Lines {
+			for _, c := range l.Components {
+				variants = append(variants, c.VariantID)
+			}
+		}
+		out.Variants, err = catalogpg.Variants(ctx, tx, variants)
+		return err
+	})
+	if err != nil {
+		return QuoteResult{}, fmt.Errorf("quote: %w", err)
 	}
 	return out, nil
 }

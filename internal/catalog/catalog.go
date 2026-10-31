@@ -136,6 +136,10 @@ type Item struct {
 	DailyRate money.Money
 	// BufferClass selects the preparation/turnaround buffer in rental policy.
 	BufferClass string
+	// CategoryID, Description and Images only present the item to customers.
+	CategoryID  CategoryID
+	Description string
+	Images      []Image
 	// Version increments on every change; bookings snapshot it.
 	Version int
 }
@@ -177,7 +181,7 @@ func (it Item) Validate() error {
 	if strings.TrimSpace(it.BufferClass) == "" {
 		return domainerr.Invalid("buffer_class", "required")
 	}
-	return nil
+	return validatePresentation(it.Description, it.Images)
 }
 
 // Variant finds a variant by ID.
@@ -218,7 +222,11 @@ type Bundle struct {
 	// one bundle. Component deposits are then not charged, so the same
 	// responsibility is never charged twice.
 	DepositOverride *money.Money
-	Version         int
+	// CategoryID, Description and Images only present the bundle to customers.
+	CategoryID  CategoryID
+	Description string
+	Images      []Image
+	Version     int
 }
 
 // Validate checks the bundle against the items it references.
@@ -262,7 +270,26 @@ func (b Bundle) Validate(items map[ItemID]Item) error {
 	if b.DepositOverride != nil && (!b.DepositOverride.Currency().Valid() || b.DepositOverride.IsNegative()) {
 		return domainerr.Invalid("deposit_override", "must be zero or positive in a supported currency")
 	}
-	return nil
+	return validatePresentation(b.Description, b.Images)
+}
+
+// UnitDeposit is the security deposit of one bundle: the override when set,
+// otherwise the deposits of its components.
+func (b Bundle) UnitDeposit(items map[ItemID]Item) (money.Money, error) {
+	if b.DepositOverride != nil {
+		return *b.DepositOverride, nil
+	}
+	deposits := make([]money.Money, 0, len(b.Components))
+	currency := money.VND
+	for _, c := range b.Components {
+		d, err := items[c.ItemID].SecurityDeposit.Mul(int64(c.Quantity))
+		if err != nil {
+			return money.Money{}, fmt.Errorf("bundle %s component %s deposit: %w", b.ID, c.Key, err)
+		}
+		currency = d.Currency()
+		deposits = append(deposits, d)
+	}
+	return money.Sum(currency, deposits...)
 }
 
 func validateHeader(id, slug, name string, status Status, version int) error {

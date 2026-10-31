@@ -15,19 +15,25 @@ import (
 	"testing"
 	"time"
 
+	"webee_rentor/internal/backoffice"
+	"webee_rentor/internal/businesstime"
+	"webee_rentor/internal/catalog/catalogapp"
 	"webee_rentor/internal/httpapi"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/identity/argon2id"
 	"webee_rentor/internal/identity/identityapp"
 	"webee_rentor/internal/identity/totp"
+	"webee_rentor/internal/inventory/inventoryapp"
 	"webee_rentor/internal/platform/postgres/pgtest"
 	"webee_rentor/internal/platform/ratelimit"
 	"webee_rentor/internal/platform/secretbox"
+	"webee_rentor/internal/rentals/rentalsapp"
+	"webee_rentor/internal/support/supportapp"
 )
 
 func TestMain(m *testing.M) {
 	slog.SetDefault(slog.New(slog.DiscardHandler))
-	pgtest.Main(m, nil)
+	pgtest.Main(m, pgtest.SeedConfig)
 }
 
 const password = "correct horse battery"
@@ -53,6 +59,8 @@ type api struct {
 	h       http.Handler
 	mail    *outbox
 	secrets map[string][]byte
+	// shop drives the business services; moving it leaves sessions alone.
+	shop *pgtest.Clock
 }
 
 type options struct {
@@ -81,14 +89,26 @@ func newAPI(t *testing.T, o options) *api {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loc, err := businesstime.LoadLocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shop := pgtest.NewClock(pgtest.Now)
+	stock := inventoryapp.New(f.Pool, inventoryapp.WithClock(shop.Now))
+	bookings := rentalsapp.New(f.Pool, loc, rentalsapp.WithClock(shop.Now))
 	h, err := httpapi.New(httpapi.Config{
 		CookieSecure: true, RequestTimeout: 10 * time.Second, RateLimits: o.limits, Now: clock.Now,
 		Limiter: ratelimit.NewMemory(clock.Now), TrustedOrigins: o.origins, TrustedProxies: o.proxies,
+		Services: &httpapi.Services{
+			Catalog: catalogapp.New(f.Pool, catalogapp.WithClock(shop.Now)), Rentals: bookings, Inventory: stock,
+			Support: supportapp.New(f.Pool, supportapp.WithClock(shop.Now)), Backoffice: backoffice.New(f.Pool, loc, bookings, stock, backoffice.WithClock(shop.Now)),
+			Store: httpapi.StoreInfo{Name: "Cửa hàng thử", Address: "1 Đường Thử", Phone: "0900000000", Email: "shop@example.test", Hours: "9:00 - 18:00"},
+		},
 	}, svc, auth, func(ctx context.Context) error { return f.Pool.Ping(ctx) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &api{t: t, f: f, h: h, mail: mail, secrets: map[string][]byte{}}
+	return &api{t: t, f: f, h: h, mail: mail, secrets: map[string][]byte{}, shop: shop}
 }
 
 type call struct {

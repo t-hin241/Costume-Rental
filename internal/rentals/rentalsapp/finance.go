@@ -18,6 +18,7 @@ import (
 	"webee_rentor/internal/payments"
 	"webee_rentor/internal/payments/paymentspg"
 	"webee_rentor/internal/platform/postgres"
+	"webee_rentor/internal/promotions/promotionspg"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalspg"
 )
@@ -84,6 +85,9 @@ func (s *Service) settleCancellation(ctx context.Context, q postgres.Querier, b 
 		}
 	}
 	if _, err := paymentspg.SaveLedger(ctx, q, l, lv, now); err != nil {
+		return err
+	}
+	if err := promotionspg.ReleaseOfBooking(ctx, q, string(b.ID), string(b.Status), now); err != nil {
 		return err
 	}
 	return s.auditMoney(ctx, q, "ledger.cancellation_settled", "booking", string(b.ID), l.BookingRef, fee.Basis, res.Owed, actor, now)

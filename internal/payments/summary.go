@@ -121,6 +121,29 @@ func (l *Ledger) Refundable(b Bucket) money.Money {
 	return l.money(max(l.Summary().refundable(b), 0))
 }
 
+// Collectable is what the ledger can still take from the customer, counting
+// payments in progress. A reservation credited to rent is part of the rent.
+func (l *Ledger) Collectable() money.Money {
+	s := l.Summary()
+	total := max(s.collectable(BucketRental), 0) + max(s.collectable(BucketSecurity), 0)
+	if !s.creditsRent {
+		total += max(s.collectable(BucketReservation), 0)
+	}
+	return l.money(total)
+}
+
+// HasMoneyToClose reports whether settling would do something: refund a
+// bucket, or apply held deposit to what is still owed.
+func (l *Ledger) HasMoneyToClose() bool {
+	s := l.Summary()
+	for _, b := range []Bucket{BucketRental, BucketReservation, BucketSecurity} {
+		if s.refundable(b) > 0 {
+			return true
+		}
+	}
+	return s.RentalOutstanding.IsPositive() && s.securityFree() > 0
+}
+
 // ExcessSecurity is the free deposit above what the booking still requires:
 // the part to refund while the rental goes on, e.g. after a modification
 // lowered the deposit or was abandoned once paid.

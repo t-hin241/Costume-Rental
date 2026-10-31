@@ -40,6 +40,8 @@ type Config struct {
 	Limiter ratelimit.Limiter
 	// Now replaces time.Now for cookie lifetimes, in tests.
 	Now func() time.Time
+	// Services enables the business API.
+	Services *Services
 }
 
 // Server routes requests to the use cases.
@@ -49,6 +51,7 @@ type Server struct {
 	auth     *identityapp.Auth
 	ready    func(context.Context) error
 	origins  map[string]bool
+	svc      *Services
 }
 
 // New builds the HTTP handler. ready reports whether dependencies (the
@@ -66,7 +69,7 @@ func New(cfg Config, svc *identityapp.Service, auth *identityapp.Auth, ready fun
 	if err := cfg.RateLimits.validate(); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, identity: svc, auth: auth, ready: ready, origins: map[string]bool{}}
+	s := &Server{cfg: cfg, identity: svc, auth: auth, ready: ready, origins: map[string]bool{}, svc: cfg.Services}
 
 	// CSRF: browsers send Sec-Fetch-Site/Origin, and cross-origin unsafe
 	// requests are refused unless the origin is trusted. Together with the
@@ -108,6 +111,10 @@ func New(cfg Config, svc *identityapp.Service, auth *identityapp.Auth, ready fun
 	mux.HandleFunc("POST /api/v1/admin/users/{id}/mfa-reset", s.authed(s.resetMFA))
 	mux.HandleFunc("GET /api/v1/admin/permission-matrix", s.authed(s.permissionMatrix))
 	mux.HandleFunc("POST /api/v1/admin/permission-matrix", s.authed(s.publishPermissionMatrix))
+
+	if s.svc != nil {
+		s.routes(mux)
+	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeError(w, r, errNotFound) })
 

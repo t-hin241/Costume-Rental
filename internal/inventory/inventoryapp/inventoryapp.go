@@ -219,8 +219,8 @@ const maxOverdueScan = 200
 // OverdueConflicts lists late returns whose asset is needed by another
 // booking whose block starts within horizon.
 func (s *Service) OverdueConflicts(ctx context.Context, p identity.Principal, horizon time.Duration) ([]Conflict, error) {
-	if err := p.Require(identity.PermInventoryRead); err != nil {
-		return nil, err
+	if !p.Can(identity.PermInventoryRead) && !p.Can(identity.PermBookingReadAll) {
+		return nil, p.Require(identity.PermInventoryRead)
 	}
 	now := s.now().UTC()
 	overdue, err := inventorypg.InUseEndedBefore(ctx, s.pool, now, maxOverdueScan)

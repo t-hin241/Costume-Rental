@@ -16,15 +16,23 @@ import (
 	"syscall"
 	"time"
 
+	"webee_rentor/internal/backoffice"
+	"webee_rentor/internal/businesstime"
+	"webee_rentor/internal/catalog/catalogapp"
 	"webee_rentor/internal/httpapi"
+	"webee_rentor/internal/identity"
 	"webee_rentor/internal/identity/argon2id"
 	"webee_rentor/internal/identity/identityapp"
+	"webee_rentor/internal/identity/identitypg"
+	"webee_rentor/internal/inventory/inventoryapp"
 	"webee_rentor/internal/notifications"
 	"webee_rentor/internal/notifications/smtpmail"
 	"webee_rentor/internal/platform/envconfig"
 	"webee_rentor/internal/platform/postgres"
 	"webee_rentor/internal/platform/ratelimit/ratelimitpg"
 	"webee_rentor/internal/platform/secretbox"
+	"webee_rentor/internal/rentals/rentalsapp"
+	"webee_rentor/internal/support/supportapp"
 )
 
 func main() {
@@ -50,7 +58,11 @@ func run() error {
 	hashConcurrency := env.Int("AUTH_HASH_CONCURRENCY", runtime.NumCPU())
 	mfaKey := env.Required("AUTH_MFA_ENCRYPTION_KEY")
 	baseURL := env.Required("APP_BASE_URL")
-	shopName := env.String("SHOP_NAME", "Webee Rentor")
+	shopName := env.String("SHOP_NAME", "Webee Rental")
+	store := httpapi.StoreInfo{
+		Name: shopName, Address: env.String("SHOP_ADDRESS", ""), Phone: env.String("SHOP_PHONE", ""), Email: env.String("SHOP_EMAIL", ""),
+		Hours: env.String("SHOP_HOURS", ""), PaymentInstructions: env.String("SHOP_PAYMENT_INSTRUCTIONS", ""),
+	}
 	smtpCfg := smtpmail.Config{
 		Host: env.Required("SMTP_HOST"), Port: env.Int("SMTP_PORT", 587),
 		Username: env.String("SMTP_USERNAME", ""), Password: env.String("SMTP_PASSWORD", ""),
@@ -103,6 +115,26 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	loc, err := businesstime.LoadLocation()
+	if err != nil {
+		return err
+	}
+	bookingMail, err := notifications.NewBookingMail(queue, shopName, func(ctx context.Context, id identity.UserID) (string, error) {
+		people, err := identitypg.Contacts(ctx, pool, []identity.UserID{id})
+		if err != nil {
+			return "", err
+		}
+		return people[id].Email, nil
+	})
+	if err != nil {
+		return err
+	}
+	inventorySvc := inventoryapp.New(pool)
+	rentalSvc := rentalsapp.New(pool, loc, rentalsapp.WithNotifier(bookingMail))
+	httpCfg.Services = &httpapi.Services{
+		Catalog: catalogapp.New(pool), Rentals: rentalSvc, Inventory: inventorySvc, Support: supportapp.New(pool),
+		Backoffice: backoffice.New(pool, loc, rentalSvc, inventorySvc), Store: store,
+	}
 	limiter := ratelimitpg.New(pool, nil)
 	httpCfg.Limiter = limiter
 	handler, err := httpapi.New(httpCfg, svc, auth, func(ctx context.Context) error { return pool.Ping(ctx) })
@@ -110,6 +142,7 @@ func run() error {
 		return err
 	}
 	go sweepRateLimits(ctx, limiter, httpCfg.RateLimits.LongestWindow())
+	go expireHolds(ctx, rentalSvc)
 
 	srv := &http.Server{
 		Addr: addr, Handler: handler,
@@ -137,6 +170,29 @@ func run() error {
 		slog.Error("email queue not drained", "error", err)
 	}
 	return nil
+}
+
+// expireHolds releases the holds that ran out, once a minute. Each pass is
+// bounded and safe to repeat, so a slow one only delays the next.
+func expireHolds(ctx context.Context, rentals *rentalsapp.Service) {
+	const batch = 100
+	t := time.NewTicker(time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			passCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+			if n, err := rentals.ExpireHolds(passCtx, batch); err != nil {
+				slog.Error("booking hold expiry failed", "expired", n, "error", err)
+			}
+			if n, err := rentals.ExpireModificationHolds(passCtx, batch); err != nil {
+				slog.Error("modification hold expiry failed", "expired", n, "error", err)
+			}
+			cancel()
+		}
+	}
 }
 
 // sweepRateLimits deletes expired rate-limit windows every 10 minutes.
