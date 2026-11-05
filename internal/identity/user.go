@@ -21,6 +21,26 @@ type Contact struct {
 	Phone string
 }
 
+// WithMaskedPhone keeps only the last 3 digits of the phone number, for staff
+// who may see whose booking it is but no longer need to call (decision D40).
+func (c Contact) WithMaskedPhone() Contact {
+	var digits []rune
+	for _, r := range c.Phone {
+		if r >= '0' && r <= '9' {
+			digits = append(digits, r)
+		}
+	}
+	if len(digits) == 0 {
+		c.Phone = ""
+		return c
+	}
+	if len(digits) > 3 {
+		digits = digits[len(digits)-3:]
+	}
+	c.Phone = "***" + string(digits)
+	return c
+}
+
 // ValidPhone accepts what people write as a phone number: 8 to 15 digits with
 // the usual separators.
 func ValidPhone(s string) bool {

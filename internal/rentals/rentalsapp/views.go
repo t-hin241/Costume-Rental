@@ -114,10 +114,13 @@ func imageOf(images map[string]catalog.Image, b *rentals.Booking) *catalog.Image
 	return nil
 }
 
-// summaries loads list rows in the order of ids.
-func (s *Service) summaries(ctx context.Context, q postgres.Querier, ids []rentals.BookingID) ([]Summary, error) {
+// summaries loads list rows in the order of ids, as viewer may see them: the
+// customer's phone number is masked once staff no longer need it (decision
+// D40). The customer and admins, who can read every profile, see it whole.
+func (s *Service) summaries(ctx context.Context, q postgres.Querier, viewer identity.Principal, ids []rentals.BookingID) ([]Summary, error) {
 	bs := make([]*rentals.Booking, 0, len(ids))
 	states := make([]payments.PaymentState, 0, len(ids))
+	settled := make([]bool, 0, len(ids))
 	var offerings []string
 	for _, id := range ids {
 		b, _, err := rentalspg.LoadBooking(ctx, q, id, false)
@@ -128,7 +131,8 @@ func (s *Service) summaries(ctx context.Context, q postgres.Querier, ids []renta
 		if err != nil {
 			return nil, err
 		}
-		bs, states = append(bs, b), append(states, l.Summary().State)
+		sum := l.Summary()
+		bs, states, settled = append(bs, b), append(states, sum.State), append(settled, sum.IsSettled())
 		if len(b.Lines) > 0 {
 			offerings = append(offerings, b.Lines[0].OfferingID)
 		}
@@ -144,9 +148,20 @@ func (s *Service) summaries(ctx context.Context, q postgres.Querier, ids []renta
 	now := s.now().UTC()
 	out := make([]Summary, len(bs))
 	for i, b := range bs {
-		out[i] = Summary{Booking: b, PaymentState: states[i], Customer: people[b.CustomerID], Image: imageOf(images, b), Overdue: b.IsOverdue(now)}
+		c := people[b.CustomerID]
+		if !seesWholeProfile(viewer, b) && !b.StaffSeesFullContact(settled[i], now) {
+			c = c.WithMaskedPhone()
+		}
+		out[i] = Summary{Booking: b, PaymentState: states[i], Customer: c, Image: imageOf(images, b), Overdue: b.IsOverdue(now)}
 	}
 	return out, nil
+}
+
+// seesWholeProfile reports whether viewer reads the customer's contact without
+// the limits of decision D40: the customer themself, or an admin, who sees
+// every phone number in the user list anyway.
+func seesWholeProfile(viewer identity.Principal, b *rentals.Booking) bool {
+	return viewer.UserID == b.CustomerID || viewer.Can(identity.PermUserRoleManage)
 }
 
 // Location is the business timezone.
@@ -172,8 +187,8 @@ func (s *Service) VariantNames(ctx context.Context, ids []catalog.VariantID) map
 }
 
 // Summaries reads list rows for a caller that already checked access.
-func (s *Service) Summaries(ctx context.Context, ids []rentals.BookingID) ([]Summary, error) {
-	return s.summaries(ctx, s.pool, ids)
+func (s *Service) Summaries(ctx context.Context, p identity.Principal, ids []rentals.BookingID) ([]Summary, error) {
+	return s.summaries(ctx, s.pool, p, ids)
 }
 
 // CountOverdue counts rentals past their return time, for reports.
@@ -206,12 +221,18 @@ type ListInput struct {
 	PageSize int
 }
 
-// Bookings lists every booking for staff.
+// Bookings lists every booking for staff. A search by phone number finds
+// finished bookings only while staff may still see that number (decision D40).
 func (s *Service) Bookings(ctx context.Context, p identity.Principal, in ListInput) ([]Summary, int, error) {
 	if err := p.Require(identity.PermBookingReadAll); err != nil {
 		return nil, 0, err
 	}
-	return s.list(ctx, rentalspg.BookingFilter{Term: in.Term, Status: in.Status, From: in.From, To: in.To, Page: in.Page, PageSize: in.PageSize})
+	f := rentalspg.BookingFilter{Term: in.Term, Status: in.Status, From: in.From, To: in.To, Page: in.Page, PageSize: in.PageSize}
+	if !p.Can(identity.PermUserRoleManage) {
+		since := rentals.ContactSearchSince(s.now().UTC())
+		f.PhoneEndedSince = &since
+	}
+	return s.list(ctx, p, f)
 }
 
 // MyBookings lists the principal's own bookings.
@@ -219,15 +240,15 @@ func (s *Service) MyBookings(ctx context.Context, p identity.Principal, finished
 	if err := p.Require(identity.PermBookingReadOwn); err != nil {
 		return nil, 0, err
 	}
-	return s.list(ctx, rentalspg.BookingFilter{Customer: p.UserID, Finished: &finished, Page: page, PageSize: size})
+	return s.list(ctx, p, rentalspg.BookingFilter{Customer: p.UserID, Finished: &finished, Page: page, PageSize: size})
 }
 
-func (s *Service) list(ctx context.Context, f rentalspg.BookingFilter) ([]Summary, int, error) {
+func (s *Service) list(ctx context.Context, p identity.Principal, f rentalspg.BookingFilter) ([]Summary, int, error) {
 	ids, total, err := rentalspg.BookingPage(ctx, s.pool, f)
 	if err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.summaries(ctx, s.pool, ids)
+	rows, err := s.summaries(ctx, s.pool, p, ids)
 	return rows, total, err
 }
 
@@ -246,7 +267,7 @@ func (s *Service) View(ctx context.Context, p identity.Principal, id rentals.Boo
 	if err != nil {
 		return Detail{}, err
 	}
-	rows, err := s.summaries(ctx, s.pool, []rentals.BookingID{id})
+	rows, err := s.summaries(ctx, s.pool, p, []rentals.BookingID{id})
 	if err != nil {
 		return Detail{}, err
 	}

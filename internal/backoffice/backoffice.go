@@ -107,7 +107,7 @@ func (s *Service) Overview(ctx context.Context, p identity.Principal) (Overview,
 			ids = append(ids, b.ID)
 		}
 	}
-	queue, err := s.rentals.Summaries(ctx, ids)
+	queue, err := s.rentals.Summaries(ctx, p, ids)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -136,7 +136,7 @@ func (s *Service) Schedule(ctx context.Context, p identity.Principal, from, to b
 	for i, r := range rows {
 		ids[i] = r.ID
 	}
-	summaries, err := s.rentals.Summaries(ctx, ids)
+	summaries, err := s.rentals.Summaries(ctx, p, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +186,7 @@ func (s *Service) Alerts(ctx context.Context, p identity.Principal) (Alerts, err
 		for i, b := range overdue {
 			ids[i] = b.ID
 		}
-		rows, err := s.rentals.Summaries(ctx, ids)
+		rows, err := s.rentals.Summaries(ctx, p, ids)
 		if err != nil {
 			return Alerts{}, err
 		}
@@ -200,7 +200,7 @@ func (s *Service) Alerts(ctx context.Context, p identity.Principal) (Alerts, err
 		return Alerts{}, err
 	}
 	for _, c := range conflicts {
-		a, err := s.conflict(ctx, c)
+		a, err := s.conflict(ctx, p, c)
 		if err != nil {
 			return Alerts{}, err
 		}
@@ -225,12 +225,12 @@ func itemsOut(b *rentals.Booking) int {
 	return n
 }
 
-func (s *Service) conflict(ctx context.Context, c inventoryapp.Conflict) (ConflictAlert, error) {
+func (s *Service) conflict(ctx context.Context, p identity.Principal, c inventoryapp.Conflict) (ConflictAlert, error) {
 	ids := []rentals.BookingID{rentals.BookingID(c.Overdue.BookingRef)}
 	for _, e := range c.Endangered {
 		ids = append(ids, rentals.BookingID(e.BookingRef))
 	}
-	rows, err := s.rentals.Summaries(ctx, ids)
+	rows, err := s.rentals.Summaries(ctx, p, ids)
 	if err != nil {
 		return ConflictAlert{}, err
 	}

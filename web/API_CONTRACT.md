@@ -66,7 +66,7 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 
 | Phương thức, đường dẫn | Quyền |
 |---|---|
-| `GET /bookings?q&status&from&to&page` | `booking.read_all` |
+| `GET /bookings?q&status&from&to&page` | `booking.read_all`. Tìm theo SĐT chỉ ra đơn chưa kết thúc hoặc kết thúc chưa quá 30 ngày (trừ admin). Mọi tóm tắt đơn (`customer.phone`) chỉ hiện 3 số cuối, dạng `***567`, khi đơn đã kết thúc quá 30 ngày và tiền đã quyết toán; khách và admin luôn thấy đủ số (D40) |
 | `POST /bookings/{id}/confirm` | `booking.confirm` |
 | `POST /bookings/{id}/start-preparation` | `rental.prepare` |
 | `POST /bookings/{id}/handover` | `rental.handover` |

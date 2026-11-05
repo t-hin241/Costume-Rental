@@ -179,3 +179,17 @@ func TestMatrixGuardrails(t *testing.T) {
 		})
 	}
 }
+
+func TestAMaskedPhoneKeepsOnlyItsLastThreeDigits(t *testing.T) {
+	for phone, want := range map[string]string{
+		"0901 234 567":    "***567",
+		"+84 (90) 123-45": "***345",
+		"12":              "***12",
+		"":                "",
+	} {
+		c := identity.Contact{Name: "Nguyễn Thử", Email: "a@example.test", Phone: phone}.WithMaskedPhone()
+		if c.Phone != want || c.Name != "Nguyễn Thử" || c.Email != "a@example.test" {
+			t.Errorf("%q masked = %+v, want phone %q", phone, c, want)
+		}
+	}
+}

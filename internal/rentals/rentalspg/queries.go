@@ -21,8 +21,11 @@ type BookingFilter struct {
 	// Finished, when set, keeps only finished (true) or live (false) bookings.
 	Finished *bool
 	From, To *time.Time
-	Page     int
-	PageSize int
+	// PhoneEndedSince, when set, lets Term match a phone number only on live
+	// bookings and on bookings that ended after it (decision D40).
+	PhoneEndedSince *time.Time
+	Page            int
+	PageSize        int
 }
 
 // EscapeLike makes user text match literally inside a LIKE pattern.
@@ -41,12 +44,15 @@ func BookingPage(ctx context.Context, q postgres.Querier, f BookingFilter) ([]re
 			AND ($2 = '' OR b.customer_id = $2)
 			AND ($3::boolean IS NULL OR (b.status IN ('COMPLETED', 'CANCELLED', 'EXPIRED')) = $3)
 			AND ($4 = '' OR b.code ILIKE '%' || $4 || '%' OR u.email ILIKE '%' || $4 || '%'
-				OR p.full_name ILIKE '%' || $4 || '%' OR p.phone ILIKE '%' || $4 || '%')
+				OR p.full_name ILIKE '%' || $4 || '%'
+				OR (p.phone ILIKE '%' || $4 || '%' AND ($9::timestamptz IS NULL
+					OR b.status NOT IN ('COMPLETED', 'CANCELLED', 'EXPIRED')
+					OR coalesce(b.completed_at, b.cancelled_at, b.expired_at) > $9)))
 			AND ($5::timestamptz IS NULL OR b.pickup_at >= $5)
 			AND ($6::timestamptz IS NULL OR b.pickup_at < $6)
 		ORDER BY b.created_at DESC, b.id
 		LIMIT $7 OFFSET $8`,
-		string(f.Status), string(f.Customer), f.Finished, EscapeLike(f.Term), f.From, f.To, f.PageSize, (f.Page-1)*f.PageSize)
+		string(f.Status), string(f.Customer), f.Finished, EscapeLike(f.Term), f.From, f.To, f.PageSize, (f.Page-1)*f.PageSize, f.PhoneEndedSince)
 	if err != nil {
 		return nil, 0, fmt.Errorf("list bookings: %w", err)
 	}
