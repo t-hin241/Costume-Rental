@@ -263,6 +263,7 @@ export const permissionGroups: { title: string; items: Record<string, string> }[
     'booking.create_own': 'Tạo đơn của mình',
     'booking.read_own': 'Xem đơn của mình',
     'booking.read_all': 'Xem mọi đơn',
+    'support.handle': 'Trả lời yêu cầu hỗ trợ',
     'booking.cancel_own': 'Hủy đơn của mình',
     'booking.cancel_any': 'Hủy mọi đơn',
     'booking.reschedule_own': 'Đổi lịch đơn của mình',

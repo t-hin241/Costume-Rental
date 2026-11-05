@@ -88,7 +88,7 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `GET /inventory/assets/{id}/history` | `inventory.read` |
 | `POST /inventory/assets/{id}/status` | Theo `actionPermissions` |
 | `POST /inventory/assets` | `inventory.manage`. `variant_id` nhận ID hoặc SKU |
-| `GET /support-requests`, `POST /support-requests/{id}/replies` | `booking.read_all` (giả định A40) |
+| `GET /support-requests`, `POST /support-requests/{id}/replies` | `support.handle` |
 
 ### Quản trị
 

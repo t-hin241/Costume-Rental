@@ -814,11 +814,11 @@ export const handlers: HttpHandler[] = [
     return json(created, 201);
   }),
   get('/support-requests', () => {
-    requirePerm('booking.read_all');
+    requirePerm('support.handle');
     return json(db.support);
   }),
   post('/support-requests/:id/replies', async ({ params, request }) => {
-    const { user } = requirePerm('booking.read_all');
+    const { user } = requirePerm('support.handle');
     const body = await request.json() as { message: string; resolve: boolean };
     const s = db.support.find((x) => x.id === params.id);
     if (!s) return fail(404, 'storage.not_found');

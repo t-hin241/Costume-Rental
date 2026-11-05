@@ -38,7 +38,7 @@ const groups: { title: string; items: NavItem[] }[] = [
       { to: '/ops/schedule', label: 'Lịch giao nhận', icon: 'calendar', anyOf: ['booking.read_all'] },
       { to: '/ops/alerts', label: 'Cảnh báo', icon: 'bell', anyOf: ['booking.read_all', 'inventory.read'], badge: 'alerts' },
       { to: '/ops/assets', label: 'Tài sản', icon: 'box', anyOf: ['inventory.read'] },
-      { to: '/ops/support', label: 'Hỗ trợ khách', icon: 'help', anyOf: ['booking.read_all'] },
+      { to: '/ops/support', label: 'Hỗ trợ khách', icon: 'help', anyOf: ['support.handle'] },
     ],
   },
 ];

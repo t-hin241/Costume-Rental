@@ -91,6 +91,9 @@ const (
 	PermTaxManage           Permission = "tax.manage"            // tax profile, rates, category treatment
 	PermRevenueRead         Permission = "revenue.read"
 
+	// PermSupportHandle reads and answers every customer's support requests.
+	PermSupportHandle Permission = "support.handle"
+
 	PermUserRoleManage Permission = "user.role_manage"
 	PermUserLock       Permission = "user.lock"
 	PermAuditRead      Permission = "audit.read"
@@ -115,13 +118,14 @@ var allPermissions = []Permission{
 	PermChargeCreate, PermChargeReverse,
 	PermRefundCreate, PermRefundApprove, PermDeductionCreate, PermDeductionApprove,
 	PermPromotionManage, PermPricingManualAdjust, PermTaxManage, PermRevenueRead,
+	PermSupportHandle,
 	PermUserRoleManage, PermUserLock, PermAuditRead, PermPolicyManage,
 }
 
 // ReferencePermissionMatrix is the owner-approved default matrix (decision
 // D22, based on docs/about_costume_rental.md §10). Production reads the
-// active, versioned matrix from configuration; migration 000009 seeds it
-// with exactly this content.
+// active, versioned matrix from configuration; migrations 000009 and 000016
+// seed it with exactly this content.
 func ReferencePermissionMatrix() PermissionMatrix {
 	return PermissionMatrix{
 		RoleCustomer: {
@@ -134,6 +138,7 @@ func ReferencePermissionMatrix() PermissionMatrix {
 			PermRentalPrepare, PermRentalHandover, PermRentalReturnReceive, PermRentalReturnInspect,
 			PermInventoryRead, PermPaymentRecord, PermChargeCreate,
 			PermRefundCreate, PermDeductionCreate, PermFeeAssess, PermDeliveryReadAll, PermDeliveryManage,
+			PermSupportHandle,
 		},
 		RoleInventoryManager: {
 			PermCatalogManage, PermInventoryRead, PermInventoryManage, PermRentalReturnInspect,
@@ -142,7 +147,7 @@ func ReferencePermissionMatrix() PermissionMatrix {
 		RoleFinance: {
 			PermBookingReadAll, PermPaymentRead, PermPaymentRecord, PermChargeReverse,
 			PermRefundCreate, PermRefundApprove, PermDeductionApprove,
-			PermFeeApprove, PermFeeWaive, PermRevenueRead, PermAuditRead,
+			PermFeeApprove, PermFeeWaive, PermRevenueRead, PermAuditRead, PermSupportHandle,
 		},
 		RoleAdmin: slices.Clone(allPermissions),
 	}

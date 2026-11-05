@@ -105,7 +105,7 @@ export function App() {
                     <Route path="ops/schedule" element={<RequirePermission anyOf={['booking.read_all']}><OpsSchedule /></RequirePermission>} />
                     <Route path="ops/alerts" element={<RequirePermission anyOf={['booking.read_all', 'inventory.read']}><OpsAlerts /></RequirePermission>} />
                     <Route path="ops/assets" element={<RequirePermission anyOf={['inventory.read']}><OpsAssets /></RequirePermission>} />
-                    <Route path="ops/support" element={<RequirePermission anyOf={['booking.read_all']}><OpsSupport /></RequirePermission>} />
+                    <Route path="ops/support" element={<RequirePermission anyOf={['support.handle']}><OpsSupport /></RequirePermission>} />
                     <Route path="admin" element={<RequirePermission anyOf={['revenue.read', 'policy.manage']}><AdminDashboard /></RequirePermission>} />
                     <Route path="admin/catalog" element={<RequirePermission anyOf={['catalog.manage']}><AdminCatalog /></RequirePermission>} />
                     <Route path="admin/users" element={<RequirePermission anyOf={['user.role_manage', 'user.lock']}><AdminUsers /></RequirePermission>} />

@@ -1,6 +1,5 @@
 // Package supportapp runs the support use cases: customers ask about their own
-// matters and staff who can read bookings answer them. A support request
-// carries the same customer data as a booking, so it needs the same permission.
+// matters and staff with support.handle answer them.
 package supportapp
 
 import (
@@ -96,7 +95,7 @@ func (s *Service) Mine(ctx context.Context, p identity.Principal) ([]View, error
 
 // All lists every request for staff.
 func (s *Service) All(ctx context.Context, p identity.Principal) ([]View, error) {
-	if err := p.Require(identity.PermBookingReadAll); err != nil {
+	if err := p.Require(identity.PermSupportHandle); err != nil {
 		return nil, err
 	}
 	all, err := supportpg.List(ctx, s.pool, "", maxList)
@@ -142,7 +141,7 @@ func (s *Service) Create(ctx context.Context, p identity.Principal, in CreateInp
 
 // Reply answers a request and optionally resolves it.
 func (s *Service) Reply(ctx context.Context, p identity.Principal, id, message string, resolve bool) (View, error) {
-	if err := p.Require(identity.PermBookingReadAll); err != nil {
+	if err := p.Require(identity.PermSupportHandle); err != nil {
 		return View{}, err
 	}
 	var out support.Request

@@ -13,14 +13,14 @@ import (
 
 func TestMain(m *testing.M) { pgtest.Main(m, nil) }
 
-// Migration 000009 seeds exactly the reference matrix; this keeps the SQL
-// seed and identity.ReferencePermissionMatrix from drifting apart.
+// Migrations 000009 and 000016 seed exactly the reference matrix; this keeps
+// the SQL and identity.ReferencePermissionMatrix from drifting apart.
 func TestSeededMatrixIsTheReferenceMatrix(t *testing.T) {
 	m, version, err := identitypg.ActiveMatrix(context.Background(), pgtest.Pool(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != "reference-2026-10-30" || !reflect.DeepEqual(m.Normalized(), identity.ReferencePermissionMatrix().Normalized()) {
+	if version != "reference-2026-11-02" || !reflect.DeepEqual(m.Normalized(), identity.ReferencePermissionMatrix().Normalized()) {
 		t.Fatalf("seeded matrix %s differs from identity.ReferencePermissionMatrix", version)
 	}
 }

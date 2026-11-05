@@ -21,9 +21,9 @@ export const demoPassword = 'demo-webee-2026';
 
 const matrix = {
   customer: ['booking.create_own', 'booking.read_own', 'booking.cancel_own', 'booking.reschedule_own', 'booking.modify_own', 'payment.read_own', 'delivery.read_own', 'complaint.create_own'],
-  rental_staff: ['booking.read_all', 'booking.confirm', 'booking.cancel_any', 'booking.reschedule_any', 'booking.modify_any', 'booking.complete', 'rental.prepare', 'rental.handover', 'rental.return_receive', 'rental.return_inspect', 'inventory.read', 'payment.record', 'charge.create', 'refund.create', 'deduction.create', 'fee.assess', 'delivery.read_all', 'delivery.manage'],
+  rental_staff: ['booking.read_all', 'support.handle', 'booking.confirm', 'booking.cancel_any', 'booking.reschedule_any', 'booking.modify_any', 'booking.complete', 'rental.prepare', 'rental.handover', 'rental.return_receive', 'rental.return_inspect', 'inventory.read', 'payment.record', 'charge.create', 'refund.create', 'deduction.create', 'fee.assess', 'delivery.read_all', 'delivery.manage'],
   inventory_manager: ['catalog.manage', 'inventory.read', 'inventory.manage', 'rental.return_inspect', 'fee.assess'],
-  finance: ['booking.read_all', 'payment.read', 'payment.record', 'charge.reverse', 'refund.create', 'refund.approve', 'deduction.approve', 'fee.approve', 'fee.waive', 'revenue.read', 'audit.read'],
+  finance: ['booking.read_all', 'support.handle', 'payment.read', 'payment.record', 'charge.reverse', 'refund.create', 'refund.approve', 'deduction.approve', 'fee.approve', 'fee.waive', 'revenue.read', 'audit.read'],
   admin: [] as string[],
 } satisfies Record<Role, string[]>;
 matrix.admin = [...new Set([...Object.values(matrix).flat(), 'rental.confirm_lost', 'fee.approve_high', 'promotion.manage', 'pricing.manual_adjust', 'tax.manage', 'user.role_manage', 'user.lock', 'policy.manage'])];
