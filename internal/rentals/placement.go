@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	ErrMixedPackages   = domainerr.New(domainerr.KindInvalid, "rentals.mixed_packages", "all lines of a booking must use the same rental package")
-	ErrPricingMismatch = domainerr.New(domainerr.KindInvalid, "rentals.pricing_mismatch", "pricing result does not match the booking lines")
+	ErrMixedPackages      = domainerr.New(domainerr.KindInvalid, "rentals.mixed_packages", "all lines of a booking must use the same rental package")
+	ErrPricingMismatch    = domainerr.New(domainerr.KindInvalid, "rentals.pricing_mismatch", "pricing result does not match the booking lines")
+	ErrTooManyUnpaidHolds = domainerr.New(domainerr.KindInvalidState, "rentals.too_many_unpaid_holds", "pay for or cancel a booking on hold before placing another")
 )
 
 // mustSub subtracts amounts already validated in the same currency.
@@ -56,7 +57,10 @@ type PlaceRequest struct {
 	Pricing   *promotions.Result
 	Policy    Policy
 	Inventory InventoryView
-	Now       time.Time
+	// UnpaidHolds is how many running holds of this customer have no money
+	// received, read under the customer's lock.
+	UnpaidHolds int
+	Now         time.Time
 }
 
 // Placement is the result to persist atomically: the booking with its
@@ -74,6 +78,9 @@ func PlaceBooking(req PlaceRequest) (Placement, error) {
 	b, err := Quote(req)
 	if err != nil {
 		return Placement{}, err
+	}
+	if req.UnpaidHolds >= b.Policy.MaxUnpaidHolds {
+		return Placement{}, fmt.Errorf("place booking %s: %w", b.ID, ErrTooManyUnpaidHolds)
 	}
 	demands, err := b.Demands(b.Schedule, b.Fulfillment)
 	if err != nil {

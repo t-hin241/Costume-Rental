@@ -268,7 +268,10 @@ type Policy struct {
 	MaxAdvance         time.Duration
 	MaxLinesPerBooking int
 	MaxQuantityPerLine int
-	Confirmation       ConfirmationRule
+	// MaxUnpaidHolds is how many running holds with no money received one
+	// customer may have at once (decision D35).
+	MaxUnpaidHolds int
+	Confirmation   ConfirmationRule
 	// Handover is what must be paid before items leave the store.
 	Handover FundsRequirement
 	// CustomerRescheduleCutoff: customers may self-reschedule only until
@@ -333,6 +336,8 @@ func (p Policy) Validate() error {
 		return domainerr.Invalid("policy.max_lines_per_booking", "must be at least 1")
 	case p.MaxQuantityPerLine < 1:
 		return domainerr.Invalid("policy.max_quantity_per_line", "must be at least 1")
+	case p.MaxUnpaidHolds < 1:
+		return domainerr.Invalid("policy.max_unpaid_holds", "must be at least 1")
 	case p.Confirmation.Mode != ConfirmByStaff && p.Confirmation.Mode != ConfirmAuto:
 		return domainerr.Invalid("policy.confirmation.mode", "unknown mode")
 	case p.Confirmation.Mode == ConfirmAuto && p.Confirmation.Funds.Kind == FundsNone:

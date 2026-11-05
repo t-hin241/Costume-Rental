@@ -210,7 +210,7 @@ function seed(): MockDb {
     },
     policy: {
       version: 'mock-2026-10-31', published_at: iso(now - 5 * 24 * hour), published_by: 'Hoàng Gia Bảo',
-      booking: { hold_minutes: 15, min_lead_hours: 48, max_advance_hours: 2160, max_lines_per_booking: 5, max_quantity_per_line: 5, reschedule_cutoff_hours: 72 },
+      booking: { hold_minutes: 15, min_lead_hours: 48, max_advance_hours: 2160, max_lines_per_booking: 5, max_quantity_per_line: 5, max_unpaid_holds: 2, reschedule_cutoff_hours: 72 },
       confirmation: { mode: 'STAFF', funds: 'RESERVATION_DEPOSIT', handover_funds: 'FULL_RENT_AND_SECURITY' },
       reservation: { kind: 'RENT_PERCENT', amount: null, rent_percent: 30, treatment: 'APPLIED_TO_RENT' },
       buffers: { default_preparation_hours: 24, default_turnaround_hours: 24, by_class: [] },

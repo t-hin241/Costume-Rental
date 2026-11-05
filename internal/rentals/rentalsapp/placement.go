@@ -62,17 +62,14 @@ func (s *Service) PlaceBooking(ctx context.Context, p identity.Principal, in Pla
 	if err := rentals.AuthorizeCreate(p); err != nil {
 		return nil, err
 	}
-	b, err := s.place(ctx, p, in)
-	if errors.Is(err, postgres.ErrDuplicate) && in.RequestKey != "" {
-		// A concurrent retry with the same key committed first.
-		return s.byRequestKey(ctx, p, in.RequestKey)
-	}
-	return b, err
-}
-
-func (s *Service) place(ctx context.Context, p identity.Principal, in PlaceInput) (*rentals.Booking, error) {
 	var out *rentals.Booking
 	err := postgres.InTx(ctx, s.pool, func(tx pgx.Tx) error {
+		// Taken first, so a concurrent retry with the same key finds the booking
+		// committed before it instead of failing on the stock or the coupon use
+		// that booking took. Customers are locked before campaigns and assets.
+		if err := rentalspg.LockCustomerHolds(ctx, tx, p.UserID); err != nil {
+			return err
+		}
 		if in.RequestKey != "" {
 			id, ok, err := rentalspg.BookingIDByRequestKey(ctx, tx, string(p.UserID), in.RequestKey)
 			if err != nil {
@@ -89,6 +86,9 @@ func (s *Service) place(ctx context.Context, p identity.Principal, in PlaceInput
 			return err
 		}
 		req.Now = now
+		if req.UnpaidHolds, err = rentalspg.UnpaidHolds(ctx, tx, p.UserID, now); err != nil {
+			return err
+		}
 		pl, err := rentals.PlaceBooking(req)
 		if err != nil {
 			return err
@@ -124,18 +124,6 @@ func (s *Service) place(ctx context.Context, p identity.Principal, in PlaceInput
 		return nil, fmt.Errorf("place booking: %w", err)
 	}
 	return out, nil
-}
-
-func (s *Service) byRequestKey(ctx context.Context, p identity.Principal, key string) (*rentals.Booking, error) {
-	id, ok, err := rentalspg.BookingIDByRequestKey(ctx, s.pool, string(p.UserID), key)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("booking by request key: %w", postgres.ErrNotFound)
-	}
-	b, _, err := rentalspg.LoadBooking(ctx, s.pool, id, false)
-	return b, err
 }
 
 // placeRequest prices the lines from the current catalog, resolves the

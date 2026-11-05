@@ -48,6 +48,7 @@ func testPolicy() rentals.Policy {
 		MaxAdvance:         90 * day,
 		MaxLinesPerBooking: 10,
 		MaxQuantityPerLine: 5,
+		MaxUnpaidHolds:     2,
 		Confirmation: rentals.ConfirmationRule{
 			Mode:  rentals.ConfirmAuto,
 			Funds: rentals.FundsRequirement{Kind: rentals.FundsReservationDeposit},

@@ -46,6 +46,7 @@ const messages: Record<string, string> = {
   'rentals.pricing_mismatch': 'Giá đã thay đổi. Vui lòng kiểm tra lại đơn.',
   'rentals.invalid_transition': 'Đơn thuê không thể thực hiện thao tác này ở trạng thái hiện tại.',
   'rentals.hold_expired': 'Thời gian giữ hàng của đơn đã hết.',
+  'rentals.too_many_unpaid_holds': 'Bạn đang có quá nhiều đơn chưa thanh toán. Hãy thanh toán hoặc hủy bớt trước khi đặt đơn mới.',
   'rentals.staff_confirmation_required': 'Đơn này cần nhân viên xác nhận.',
   'rentals.insufficient_funds': 'Chưa nhận đủ số tiền cần thiết.',
   'rentals.checklist_incomplete': 'Vui lòng hoàn tất danh sách kiểm tra bàn giao.',

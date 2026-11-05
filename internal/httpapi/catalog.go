@@ -330,7 +330,7 @@ func (s *Server) publicPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version": p.Version, "hold_minutes": minutes(p.HoldTTL), "reservation": reservationOf(p.Reservation),
+		"version": p.Version, "hold_minutes": minutes(p.HoldTTL), "max_unpaid_holds": p.MaxUnpaidHolds, "reservation": reservationOf(p.Reservation),
 		"cancellation": cancellationOf(p.Cancellation), "late_fee": lateFeeOf(p.LateFee),
 		"loss_verification_hours": hours(p.Loss.VerificationWindow), "reschedule_cutoff_hours": hours(p.CustomerRescheduleCutoff),
 		"modification_cutoff_hours": hours(p.Modification.SelfServiceCutoff),

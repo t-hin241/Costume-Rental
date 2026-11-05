@@ -16,6 +16,7 @@ booking:
   max_advance: 2160h
   max_lines_per_booking: 5
   max_quantity_per_line: 5
+  max_unpaid_holds: 2
   customer_reschedule_cutoff: 72h
 confirmation: { mode: AUTO, funds: RESERVATION_DEPOSIT }
 handover: { funds: FULL_RENT_AND_SECURITY }

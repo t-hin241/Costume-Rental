@@ -35,6 +35,7 @@ export default function Policies() {
                 { label: 'Tiền giữ lịch', value: reservationText(p) },
                 { label: 'Cách xử lý khi thuê thành công', value: p.reservation.treatment === 'APPLIED_TO_RENT' ? 'Trừ vào tiền thuê' : 'Hoàn lại sau khi trả' },
                 { label: 'Thời gian giữ hàng khi đơn chờ', value: `${p.hold_minutes} phút` },
+                { label: 'Số đơn chưa thanh toán cùng lúc', value: `Tối đa ${p.max_unpaid_holds}` },
               ]} />
             </Card>
             <Card title="Hủy đơn">

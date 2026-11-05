@@ -233,6 +233,9 @@ function buildQuote(input: BookingInput): Quote {
 }
 
 function placeBooking(input: BookingInput, customerId: string): MockBooking {
+  const unpaid = db.bookings.filter((b) => b.customer_id === customerId && b.status === 'PENDING_CONFIRMATION'
+    && b.hold_expires_at !== null && Date.now() < new Date(b.hold_expires_at).getTime() && financeOf(b).paid_total.amount === 0);
+  if (unpaid.length >= db.policy.booking.max_unpaid_holds) throw new Refused(409, 'rentals.too_many_unpaid_holds');
   const availability = checkAvailability(input);
   if (!availability.available) throw new Refused(409, 'inventory.insufficient');
   const { pkg, pickup, due } = schedule(input);
@@ -358,7 +361,7 @@ function dashboard(days: number): Dashboard {
 function publicPolicy(): PublicPolicy {
   const p = db.policy;
   return {
-    version: p.version, hold_minutes: p.booking.hold_minutes, reservation: p.reservation, cancellation: p.cancellation, late_fee: p.late_fee, loss_verification_hours: p.loss_verification_hours,
+    version: p.version, hold_minutes: p.booking.hold_minutes, max_unpaid_holds: p.booking.max_unpaid_holds, reservation: p.reservation, cancellation: p.cancellation, late_fee: p.late_fee, loss_verification_hours: p.loss_verification_hours,
     reschedule_cutoff_hours: p.booking.reschedule_cutoff_hours, modification_cutoff_hours: p.modification.self_service_cutoff_hours,
   };
 }

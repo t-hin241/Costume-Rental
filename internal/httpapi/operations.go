@@ -481,6 +481,7 @@ type policyDTO struct {
 		MaxAdvanceHours       int `json:"max_advance_hours"`
 		MaxLinesPerBooking    int `json:"max_lines_per_booking"`
 		MaxQuantityPerLine    int `json:"max_quantity_per_line"`
+		MaxUnpaidHolds        int `json:"max_unpaid_holds"`
 		RescheduleCutoffHours int `json:"reschedule_cutoff_hours"`
 	} `json:"booking"`
 	Confirmation struct {
@@ -511,6 +512,7 @@ func policyOf(v rentalsapp.PolicyVersion) policyDTO {
 	d.Version, d.PublishedAt, d.PublishedBy = p.Version, v.PublishedAt, v.PublishedBy
 	d.Booking.HoldMinutes, d.Booking.MinLeadHours, d.Booking.MaxAdvanceHours = minutes(p.HoldTTL), hours(p.MinLeadTime), hours(p.MaxAdvance)
 	d.Booking.MaxLinesPerBooking, d.Booking.MaxQuantityPerLine = p.MaxLinesPerBooking, p.MaxQuantityPerLine
+	d.Booking.MaxUnpaidHolds = p.MaxUnpaidHolds
 	d.Booking.RescheduleCutoffHours = hours(p.CustomerRescheduleCutoff)
 	d.Confirmation.Mode, d.Confirmation.Funds, d.Confirmation.HandoverFunds = p.Confirmation.Mode, p.Confirmation.Funds.Kind, p.Handover.Kind
 	d.Reservation = reservationOf(p.Reservation)
@@ -534,6 +536,7 @@ func applyPolicy(p rentals.Policy, d policyDTO) (rentals.Policy, error) {
 	p.Version = strings.TrimSpace(d.Version)
 	p.HoldTTL, p.MinLeadTime, p.MaxAdvance = m(d.Booking.HoldMinutes), h(d.Booking.MinLeadHours), h(d.Booking.MaxAdvanceHours)
 	p.MaxLinesPerBooking, p.MaxQuantityPerLine = d.Booking.MaxLinesPerBooking, d.Booking.MaxQuantityPerLine
+	p.MaxUnpaidHolds = d.Booking.MaxUnpaidHolds
 	p.CustomerRescheduleCutoff = h(d.Booking.RescheduleCutoffHours)
 	p.Confirmation = rentals.ConfirmationRule{Mode: d.Confirmation.Mode, Funds: rentals.FundsRequirement{Kind: d.Confirmation.Funds}}
 	p.Handover = rentals.FundsRequirement{Kind: d.Confirmation.HandoverFunds}

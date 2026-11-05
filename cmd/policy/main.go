@@ -48,6 +48,7 @@ type file struct {
 		MaxAdvance               time.Duration `yaml:"max_advance"`
 		MaxLinesPerBooking       int           `yaml:"max_lines_per_booking"`
 		MaxQuantityPerLine       int           `yaml:"max_quantity_per_line"`
+		MaxUnpaidHolds           int           `yaml:"max_unpaid_holds"`
 		CustomerRescheduleCutoff time.Duration `yaml:"customer_reschedule_cutoff"`
 	} `yaml:"booking"`
 	Confirmation struct {
@@ -193,7 +194,7 @@ func parse(data []byte) (config, error) {
 	c := config{
 		Rental: rentals.Policy{
 			Version: f.Version, HoldTTL: f.Booking.HoldTTL, MinLeadTime: f.Booking.MinLeadTime, MaxAdvance: f.Booking.MaxAdvance,
-			MaxLinesPerBooking: f.Booking.MaxLinesPerBooking, MaxQuantityPerLine: f.Booking.MaxQuantityPerLine,
+			MaxLinesPerBooking: f.Booking.MaxLinesPerBooking, MaxQuantityPerLine: f.Booking.MaxQuantityPerLine, MaxUnpaidHolds: f.Booking.MaxUnpaidHolds,
 			Confirmation:             rentals.ConfirmationRule{Mode: f.Confirmation.Mode, Funds: rentals.FundsRequirement{Kind: f.Confirmation.Funds}},
 			Handover:                 rentals.FundsRequirement{Kind: f.Handover.Funds},
 			CustomerRescheduleCutoff: f.Booking.CustomerRescheduleCutoff,

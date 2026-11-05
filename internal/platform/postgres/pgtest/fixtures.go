@@ -43,7 +43,7 @@ func VND(v int64) money.Money {
 func Policy() rentals.Policy {
 	return rentals.Policy{
 		Version: "fixture-v1", HoldTTL: 30 * time.Minute, MinLeadTime: 2 * time.Hour, MaxAdvance: 90 * day,
-		MaxLinesPerBooking: 10, MaxQuantityPerLine: 5,
+		MaxLinesPerBooking: 10, MaxQuantityPerLine: 5, MaxUnpaidHolds: 100,
 		Confirmation: rentals.ConfirmationRule{Mode: rentals.ConfirmByStaff, Funds: rentals.FundsRequirement{Kind: rentals.FundsReservationDeposit}},
 		Handover:     rentals.FundsRequirement{Kind: rentals.FundsFullRentAndSecurity}, CustomerRescheduleCutoff: day,
 		Buffers: rentals.BufferPolicy{

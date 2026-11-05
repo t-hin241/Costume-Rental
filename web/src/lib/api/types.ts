@@ -257,6 +257,7 @@ export interface LateFeeTier {
 export interface PublicPolicy {
   version: string;
   hold_minutes: number;
+  max_unpaid_holds: number;
   reservation: {
     kind: 'NONE' | 'FIXED' | 'RENT_PERCENT';
     amount: Money | null;
@@ -739,6 +740,7 @@ export interface PolicyDocument {
     max_advance_hours: number;
     max_lines_per_booking: number;
     max_quantity_per_line: number;
+    max_unpaid_holds: number;
     reschedule_cutoff_hours: number;
   };
   confirmation: {

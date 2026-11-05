@@ -71,6 +71,7 @@ function Editor({ active }: { active: PolicyDocument }) {
         <Num label="Khách tự đổi lịch trước giờ nhận (giờ)" value={draft.booking.reschedule_cutoff_hours} onChange={(v) => patch((d) => { d.booking.reschedule_cutoff_hours = v; })} />
         <Num label="Số dòng tối đa mỗi đơn" min={1} value={draft.booking.max_lines_per_booking} onChange={(v) => patch((d) => { d.booking.max_lines_per_booking = v; })} />
         <Num label="Số lượng tối đa mỗi dòng" min={1} value={draft.booking.max_quantity_per_line} onChange={(v) => patch((d) => { d.booking.max_quantity_per_line = v; })} />
+        <Num label="Số đơn chưa thanh toán tối đa mỗi khách" min={1} value={draft.booking.max_unpaid_holds} onChange={(v) => patch((d) => { d.booking.max_unpaid_holds = v; })} />
       </Section>
       <Section title="Xác nhận và bàn giao">
         <Field label="Cách xác nhận đơn" required>

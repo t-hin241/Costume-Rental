@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"webee_rentor/internal/catalog"
+	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory"
 	"webee_rentor/internal/money"
 	"webee_rentor/internal/platform/postgres"
@@ -116,6 +117,29 @@ func SaveBooking(ctx context.Context, q postgres.Querier, b *rentals.Booking, v 
 		return 0, err
 	}
 	return v + 1, nil
+}
+
+// LockCustomerHolds makes one customer's new bookings wait for each other until
+// the transaction ends, so none of them counts holds another is about to add.
+func LockCustomerHolds(ctx context.Context, q postgres.Querier, customer identity.UserID) error {
+	if _, err := q.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('rentals.holds:' || $1::text))`, customer); err != nil {
+		return fmt.Errorf("lock holds of customer %s: %w", customer, err)
+	}
+	return nil
+}
+
+// UnpaidHolds counts the customer's holds still running with no money received.
+func UnpaidHolds(ctx context.Context, q postgres.Querier, customer identity.UserID, now time.Time) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `
+		SELECT count(*) FROM bookings b
+		WHERE b.customer_id = $1 AND b.status = 'PENDING_CONFIRMATION' AND b.hold_expires_at > $2
+			AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.booking_id = b.id AND p.status = 'SUCCEEDED')`,
+		customer, now.UTC()).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count unpaid holds of customer %s: %w", customer, err)
+	}
+	return n, nil
 }
 
 type snapshots struct {
