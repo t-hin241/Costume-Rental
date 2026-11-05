@@ -2,7 +2,8 @@
 // database: rental, allocation and payment-approval policies, counter slots
 // and store closures. Policies are immutable versions, so running it again
 // with the same file changes nothing, and changing a value needs a new
-// version. The tax section has its own lifecycle and is not read here.
+// version. The tax profile is not in this file: admins add its versions in
+// the back office (decision D41), and a tax section is refused.
 //
 // One-off closures are only ever added: removing a date from the file does
 // not reopen the store on that date.
@@ -110,7 +111,6 @@ type file struct {
 	Payments struct {
 		DistinctApproverAbove int64 `yaml:"distinct_approver_above"`
 	} `yaml:"payments"`
-	Tax   yaml.Node `yaml:"tax"`
 	Store struct {
 		CounterSlots []struct {
 			ID    string   `yaml:"id"`

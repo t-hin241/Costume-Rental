@@ -36,6 +36,7 @@ import (
 	"webee_rentor/internal/rentals/rentalsapp"
 	"webee_rentor/internal/retention/retentionapp"
 	"webee_rentor/internal/support/supportapp"
+	"webee_rentor/internal/tax/taxapp"
 )
 
 func main() {
@@ -152,7 +153,8 @@ func run(ctx context.Context) error {
 	httpCfg.Services = &httpapi.Services{
 		Catalog: catalogapp.New(pool), Rentals: rentalSvc, Inventory: inventorySvc, Support: supportapp.New(pool),
 		Media:      mediaapp.New(pool, mediaStore, int64(mediaMaxBytes)),
-		Backoffice: backoffice.New(pool, loc, rentalSvc, inventorySvc), Retention: retentionapp.New(pool), Store: store,
+		Backoffice: backoffice.New(pool, loc, rentalSvc, inventorySvc), Retention: retentionapp.New(pool),
+		Tax: taxapp.New(pool, loc), Store: store,
 	}
 	limiter := ratelimitpg.New(pool, nil)
 	httpCfg.Limiter = limiter
@@ -163,6 +165,7 @@ func run(ctx context.Context) error {
 	go sweepRateLimits(ctx, limiter, httpCfg.RateLimits.LongestWindow())
 	go expireHolds(ctx, rentalSvc)
 	go purgeSupport(ctx, httpCfg.Services.Retention)
+	go recognizeRevenue(ctx, httpCfg.Services.Tax)
 
 	srv := &http.Server{
 		Addr: addr, Handler: handler,
@@ -241,6 +244,42 @@ func purgeSupport(ctx context.Context, retention *retentionapp.Service) {
 					break
 				}
 			}
+		}
+	}
+}
+
+// recognizeRevenue catches up the revenue of ended bookings (decision D41) at
+// start and then once an hour: bookings that ended before a tax profile
+// covered them, and any change a booking transaction did not record. Booking
+// transactions recognise revenue themselves; this only fills gaps.
+func recognizeRevenue(ctx context.Context, revenue *taxapp.Service) {
+	const batch, maxBatches = 100, 50
+	pass := func() {
+		for range maxBatches {
+			passCtx, cancel := context.WithTimeout(ctx, time.Minute)
+			n, err := revenue.RecognizePending(passCtx, batch)
+			cancel()
+			if n > 0 {
+				slog.Info("revenue recognised", "bookings", n)
+			}
+			if err != nil {
+				slog.Error("revenue recognition failed", "error", err)
+				return
+			}
+			if n < batch {
+				return
+			}
+		}
+	}
+	pass()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			pass()
 		}
 	}
 }

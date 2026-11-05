@@ -197,3 +197,52 @@ func ClosureReasons(ctx context.Context, q postgres.Querier) (map[string]string,
 	}
 	return out, nil
 }
+
+// EndedRow is a booking that was completed, cancelled or expired.
+type EndedRow struct {
+	ID      rentals.BookingID
+	Code    string
+	Status  rentals.Status
+	EndedAt time.Time
+}
+
+// EndedBetween lists the bookings that ended in [from, to), in end order.
+func EndedBetween(ctx context.Context, q postgres.Querier, from, to time.Time) ([]EndedRow, error) {
+	rows, err := q.Query(ctx, `
+		SELECT id, code, status, coalesce(completed_at, cancelled_at, expired_at) AS at FROM bookings
+		WHERE status IN ('COMPLETED', 'CANCELLED', 'EXPIRED')
+			AND coalesce(completed_at, cancelled_at, expired_at) >= $1 AND coalesce(completed_at, cancelled_at, expired_at) < $2
+		ORDER BY at, id`, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("bookings ended in period: %w", err)
+	}
+	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (EndedRow, error) {
+		var e EndedRow
+		err := r.Scan(&e.ID, &e.Code, &e.Status, &e.EndedAt)
+		e.EndedAt = e.EndedAt.UTC()
+		return e, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bookings ended in period: %w", err)
+	}
+	return out, nil
+}
+
+// Statuses reads the status of every booking.
+func Statuses(ctx context.Context, q postgres.Querier) (map[rentals.BookingID]rentals.Status, error) {
+	rows, err := q.Query(ctx, `SELECT id, status FROM bookings`)
+	if err != nil {
+		return nil, fmt.Errorf("booking statuses: %w", err)
+	}
+	defer rows.Close()
+	out := map[rentals.BookingID]rentals.Status{}
+	for rows.Next() {
+		var id rentals.BookingID
+		var s rentals.Status
+		if err := rows.Scan(&id, &s); err != nil {
+			return nil, fmt.Errorf("booking statuses: %w", err)
+		}
+		out[id] = s
+	}
+	return out, rows.Err()
+}

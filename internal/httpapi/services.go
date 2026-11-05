@@ -19,6 +19,7 @@ import (
 	"webee_rentor/internal/rentals/rentalsapp"
 	"webee_rentor/internal/retention/retentionapp"
 	"webee_rentor/internal/support/supportapp"
+	"webee_rentor/internal/tax/taxapp"
 )
 
 // StoreInfo is what the storefront says about the shop.
@@ -41,6 +42,7 @@ type Services struct {
 	Media      *mediaapp.Service
 	Backoffice *backoffice.Service
 	Retention  *retentionapp.Service
+	Tax        *taxapp.Service
 	Store      StoreInfo
 }
 
@@ -125,6 +127,19 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/admin/media/images", s.authed(s.uploadImage))
 	mux.HandleFunc("GET /api/v1/admin/policies/active", s.authed(s.activePolicy))
 	mux.HandleFunc("POST /api/v1/admin/policies", s.authed(s.publishPolicy))
+	mux.HandleFunc("GET /api/v1/admin/tax/profiles", s.authed(s.taxProfiles))
+	mux.HandleFunc("POST /api/v1/admin/tax/profiles", s.authed(s.addTaxProfile))
+	mux.HandleFunc("GET /api/v1/admin/revenue/year", s.authed(s.revenueYear))
+	mux.HandleFunc("GET /api/v1/admin/revenue/report", s.authed(s.revenueReport))
+	mux.HandleFunc("GET /api/v1/admin/revenue/entries", s.authed(s.revenueEntries))
+	mux.HandleFunc("GET /api/v1/admin/revenue/entries.csv", s.authed(s.exportRevenue))
+	mux.HandleFunc("POST /api/v1/admin/revenue/entries", s.authed(s.addRevenueEntry))
+	mux.HandleFunc("POST /api/v1/admin/revenue/entries/{id}/reverse", s.authed(s.reverseRevenueEntry))
+	mux.HandleFunc("GET /api/v1/admin/finance/cash-flow", s.authed(s.cashFlow))
+	mux.HandleFunc("GET /api/v1/admin/finance/reconciliation", s.authed(s.reconciliation))
+	mux.HandleFunc("GET /api/v1/admin/finance/transactions", s.authed(s.transactions))
+	mux.HandleFunc("POST /api/v1/admin/finance/transactions/{kind}/{id}/reconcile", s.authed(s.reconcileTransaction))
+	mux.HandleFunc("POST /api/v1/admin/finance/reconciliations/{id}/revoke", s.authed(s.revokeReconciliation))
 	mux.HandleFunc("GET /api/v1/admin/promotions", s.authed(s.campaigns))
 	mux.HandleFunc("POST /api/v1/admin/promotions", s.authed(s.saveCampaign))
 	mux.HandleFunc("PUT /api/v1/admin/promotions/{id}", s.authed(s.saveCampaign))

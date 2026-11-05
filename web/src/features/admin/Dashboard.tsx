@@ -7,7 +7,9 @@ import { Card, PageHeader, Select, Skeleton } from '../../components/ui';
 import { adminApi } from '../../lib/api/endpoints';
 import type { Dashboard as Data, DashboardKpi } from '../../lib/api/types';
 import { formatBusinessDate, formatCompactVND, formatMoney, formatNumber } from '../../lib/format';
+import { useAuth } from '../../lib/auth';
 import { assetStatus, bookingStatus } from '../../lib/labels';
+import { ThresholdCard } from './ThresholdCard';
 
 const kpiMeta: Record<DashboardKpi['key'], { label: string; format: (v: number) => string; brand?: boolean }> = {
   revenue: { label: 'Doanh thu ghi nhận', format: (v) => formatMoney({ amount: v, currency: 'VND' }), brand: true },
@@ -44,6 +46,7 @@ export default function Dashboard() {
 }
 
 function DashboardView({ data }: { data: Data }) {
+  const { can } = useAuth();
   const topColumns: Column<Data['top_offerings'][number]>[] = [
     { key: 'name', header: 'Trang phục', render: (r) => <strong>{r.name}</strong> },
     { key: 'bookings', header: 'Số đơn', align: 'right', render: (r) => <span className="tnum">{r.bookings}</span> },
@@ -65,6 +68,7 @@ function DashboardView({ data }: { data: Data }) {
           );
         })}
       </div>
+      {can('revenue.read') && <ThresholdCard link />}
       <Card title={`Doanh thu theo ngày, ${data.range_days} ngày gần nhất`}>
         <ColumnChart
           ariaLabel="Biểu đồ cột doanh thu theo ngày"

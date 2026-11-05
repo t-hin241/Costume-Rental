@@ -22,6 +22,8 @@ const groups: { title: string; items: NavItem[] }[] = [
     title: 'Quản trị',
     items: [
       { to: '/admin', label: 'Tổng quan', icon: 'chart', anyOf: ['revenue.read', 'policy.manage'], end: true },
+      { to: '/admin/revenue', label: 'Doanh thu & thuế', icon: 'card', anyOf: ['revenue.read', 'tax.manage'] },
+      { to: '/admin/reconciliation', label: 'Đối soát', icon: 'check', anyOf: ['revenue.read'] },
       { to: '/admin/catalog', label: 'Sản phẩm', icon: 'shirt', anyOf: ['catalog.manage'] },
       { to: '/admin/promotions', label: 'Khuyến mãi', icon: 'tag', anyOf: ['promotion.manage'] },
       { to: '/admin/policies', label: 'Chính sách', icon: 'settings', anyOf: ['policy.manage'] },

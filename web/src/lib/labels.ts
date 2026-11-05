@@ -2,6 +2,7 @@ import type {
   AssessmentStatus, AssetAction, AssetStatus, AuditResult, BookingAction, BookingItemState, BookingStatus, Bucket,
   CampaignStatus, CampaignType, CatalogStatus, ChargeKind, Condition, FeeKind, FundsRequirement, LegMode,
   PaymentChannel, PaymentMethod, PaymentPurpose, PaymentState, PaymentStatus, RefundStatus, RetentionBlocker, Role, SupportStatus, SupportTopic, UserStatus,
+  ReportGroup, RevenueCategory, RevenueMismatch, RevenueSource, ThresholdLevel, TxnKind,
 } from './api/types';
 
 // Vietnamese labels for the backend's enums. Status colours always travel
@@ -314,8 +315,10 @@ export const permissionGroups: { title: string; items: Record<string, string> }[
   { title: 'Giá, thuế, doanh thu', items: {
     'promotion.manage': 'Quản lý khuyến mãi',
     'pricing.manual_adjust': 'Điều chỉnh giá thủ công',
-    'tax.manage': 'Quản lý thuế',
-    'revenue.read': 'Xem doanh thu',
+    'tax.manage': 'Quản lý hồ sơ thuế (ngưỡng, mốc cảnh báo)',
+    'revenue.read': 'Xem doanh thu, dòng tiền, đối soát',
+    'revenue.record': 'Nhập doanh thu ngoài website',
+    'payment.reconcile': 'Đối soát giao dịch với sao kê',
   } },
   { title: 'Quản trị hệ thống', items: {
     'user.role_manage': 'Quản lý vai trò',
@@ -325,3 +328,44 @@ export const permissionGroups: { title: string; items: Record<string, string> }[
     'policy.manage': 'Quản lý chính sách',
   } },
 ];
+
+/** Decision D41: what each revenue category holds. Labels only; no tax treatment. */
+export const revenueCategory: Record<RevenueCategory, string> = {
+  RENTAL_REVENUE: 'Tiền thuê',
+  DELIVERY_SERVICE: 'Phí giao nhận',
+  CLEANING_SERVICE: 'Phí vệ sinh',
+  LATE_RETURN_CHARGE: 'Phí trả trễ',
+  DAMAGE_CHARGE: 'Bồi thường hư hỏng',
+  LOST_ITEM_COMPENSATION: 'Bồi thường mất, thiếu món',
+  CANCELLATION_CHARGE: 'Phí hủy',
+  OTHER_CHARGE: 'Khoản thu khác',
+};
+
+export const revenueSource: Record<RevenueSource, string> = {
+  BOOKING: 'Đơn thuê',
+  MANUAL: 'Ngoài website',
+};
+
+export const thresholdLevel: Record<ThresholdLevel, StatusLabel> = {
+  BELOW: { label: 'Dưới mốc cảnh báo', tone: 'success' },
+  WARNING: { label: 'Gần ngưỡng', tone: 'warning' },
+  EXCEEDED: { label: 'Vượt ngưỡng', tone: 'danger' },
+};
+
+export const reportGroup: Record<ReportGroup, string> = {
+  day: 'Theo ngày',
+  month: 'Theo tháng',
+  quarter: 'Theo quý',
+  year: 'Theo năm',
+};
+
+export const txnKind: Record<TxnKind, string> = {
+  PAYMENT: 'Thu',
+  REFUND: 'Hoàn',
+};
+
+export const revenueMismatch: Record<RevenueMismatch, StatusLabel> = {
+  NOT_RECOGNISED: { label: 'Chưa ghi nhận đủ doanh thu', tone: 'warning' },
+  OWED: { label: 'Khách còn nợ', tone: 'danger' },
+  OVERPAID: { label: 'Thu thừa, chờ hoàn', tone: 'info' },
+};

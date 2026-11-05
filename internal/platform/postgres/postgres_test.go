@@ -97,6 +97,42 @@ func TestDataRetentionMigrationKeepsExistingData(t *testing.T) {
 	}
 }
 
+// Migration 000019 (decision D41) grants revenue.record and
+// payment.reconcile to finance and admin only; rolling back restores the
+// previous matrix.
+func TestRevenueLedgerMigrationGrantsFinance(t *testing.T) {
+	ctx := context.Background()
+	url := pgtest.NewDatabase(t)
+	if err := postgres.MigrateTo(url, 19); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := postgres.Open(ctx, postgres.Config{DSN: url})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	grants := func() (version string, finance, admin, staff bool) {
+		t.Helper()
+		if err := pool.QueryRow(ctx, `SELECT version,
+				document->'finance' ? 'revenue.record' AND document->'finance' ? 'payment.reconcile',
+				document->'admin' ? 'revenue.record' AND document->'admin' ? 'payment.reconcile',
+				document->'rental_staff' ? 'revenue.record' OR document->'rental_staff' ? 'payment.reconcile'
+			FROM policy_documents WHERE kind = 'PERMISSION_MATRIX' AND active`).Scan(&version, &finance, &admin, &staff); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if v, finance, admin, staff := grants(); v != "reference-2026-11-05.2" || !finance || !admin || staff {
+		t.Fatalf("matrix after 000019 = %s finance %v admin %v staff %v", v, finance, admin, staff)
+	}
+	if err := postgres.MigrateTo(url, 18); err != nil {
+		t.Fatal(err)
+	}
+	if v, finance, _, _ := grants(); v != "reference-2026-11-05" || finance {
+		t.Fatalf("matrix after rollback = %s finance %v", v, finance)
+	}
+}
+
 func TestHistoryTablesAreAppendOnly(t *testing.T) {
 	ctx := context.Background()
 	p := pgtest.Pool(t)

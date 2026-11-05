@@ -797,3 +797,165 @@ export interface Campaign {
   used: number;
   usage_limit: number | null;
 }
+
+// ---- CONTRACT: revenue and reconciliation (decision D41) ----
+// The system computes no tax: it keeps the revenue ledger, watches the annual
+// threshold and reconciles money with the statement.
+
+export type RevenueCategory =
+  | 'RENTAL_REVENUE' | 'DELIVERY_SERVICE' | 'CLEANING_SERVICE' | 'LATE_RETURN_CHARGE'
+  | 'DAMAGE_CHARGE' | 'LOST_ITEM_COMPENSATION' | 'CANCELLATION_CHARGE' | 'OTHER_CHARGE';
+
+export type RevenueSource = 'BOOKING' | 'MANUAL';
+export type ThresholdLevel = 'BELOW' | 'WARNING' | 'EXCEEDED';
+export type ReportGroup = 'day' | 'month' | 'quarter' | 'year';
+export type TxnKind = 'PAYMENT' | 'REFUND';
+export type RevenueMismatch = 'NOT_RECOGNISED' | 'OWED' | 'OVERPAID';
+
+export interface TaxProfile {
+  version: string;
+  taxpayer_type: 'INDIVIDUAL_BUSINESS';
+  annual_revenue_threshold: Money;
+  threshold_effective_from: string;
+  warning_percents: number[];
+  effective_from: string;
+  effective_until: string | null;
+}
+
+export interface TaxProfileInput {
+  version: string;
+  annual_revenue_threshold: Money;
+  threshold_effective_from: string;
+  warning_percents: number[];
+  /** Business date the version applies from; only the first may be in the past. */
+  effective_from: string;
+}
+
+export interface RevenueYear {
+  year: number;
+  has_profile: boolean;
+  /** Ended bookings whose revenue is not recognised yet, any year. */
+  pending_bookings: number;
+  profile_version: string | null;
+  list: Money | null;
+  discount: Money | null;
+  revenue: Money | null;
+  threshold: Money | null;
+  percent: number;
+  level: ThresholdLevel;
+  /** Highest warning mark reached; 0 below the first. */
+  mark: number;
+  marks: number[];
+  by_category: { category: RevenueCategory; amount: Money }[];
+}
+
+export interface RevenueReportRow {
+  /** First business day of the period. */
+  period: string;
+  category: RevenueCategory;
+  entries: number;
+  list: Money;
+  discount: Money;
+  net: Money;
+}
+
+export interface RevenueEntry {
+  id: string;
+  source: RevenueSource;
+  booking_id: string | null;
+  booking_code: string | null;
+  category: RevenueCategory;
+  list: Money;
+  discount: Money;
+  net: Money;
+  recognized_at: string;
+  profile_version: string;
+  reverses: string | null;
+  reason: string | null;
+  channel: string | null;
+  note: string | null;
+  document_ref: string | null;
+  recorded_by: string | null;
+}
+
+export interface RevenueQuery {
+  from: string;
+  to: string;
+  category?: RevenueCategory | '';
+  source?: RevenueSource | '';
+  booking?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export interface ManualRevenueInput {
+  category: RevenueCategory;
+  amount: Money;
+  date: string;
+  channel: string;
+  note: string;
+  document_ref: string;
+}
+
+export interface Movement {
+  method: PaymentMethod;
+  bucket: Bucket;
+  count: number;
+  amount: Money;
+}
+
+export interface CashFlow {
+  received: Movement[];
+  refunded: Movement[];
+  position: {
+    security_held: Money;
+    reservation_held: Money;
+    owed_ended: Money;
+    owed_ended_bookings: number;
+    due_open: Money;
+    pending_refunds: Money;
+    pending_payments: Money;
+    overpaid: Money;
+  };
+}
+
+export interface Reconciliation {
+  id: string;
+  statement_ref: string;
+  note: string | null;
+  by: string;
+  at: string;
+}
+
+export interface Transaction {
+  kind: TxnKind;
+  id: string;
+  booking_id: string;
+  booking_code: string;
+  method: PaymentMethod;
+  reference: string | null;
+  amount: Money;
+  buckets: Bucket[];
+  at: string;
+  reconciliation: Reconciliation | null;
+}
+
+export interface Section<T> {
+  items: T[];
+  total: number;
+}
+
+export interface ReconciliationReport {
+  recognised: Money;
+  received: Money;
+  refunded: Money;
+  ended_bookings: number;
+  mismatched: Section<{
+    booking_id: string; booking_code: string; status: BookingStatus; ended_at: string;
+    charged: Money; recognised: Money; covered: Money; mismatches: RevenueMismatch[];
+  }>;
+  unreconciled: Section<Transaction>;
+  attention: Section<{ kind: TxnKind; id: string; booking_id: string; booking_code: string; amount: Money; status: string; reason: string | null; at: string }>;
+  unrecognised: Section<{ booking_id: string; booking_code: string; ended_at: string }>;
+  other_charges: Section<RevenueEntry>;
+}

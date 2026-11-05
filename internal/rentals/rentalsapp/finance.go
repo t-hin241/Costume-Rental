@@ -21,6 +21,7 @@ import (
 	"webee_rentor/internal/promotions/promotionspg"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalspg"
+	"webee_rentor/internal/tax/taxapp"
 )
 
 // fundsOf is what the ledger reports to the booking's funds requirements.
@@ -155,6 +156,10 @@ func (s *Service) withLedger(ctx context.Context, id rentals.BookingID, fn ledge
 			if err := s.record(ctx, tx, ts...); err != nil {
 				return err
 			}
+		}
+		// A fee waived or lowered after the booking ended changes its revenue.
+		if _, err := taxapp.SyncBooking(ctx, tx, b, now); err != nil {
+			return err
 		}
 		out, changed, done = l, b, ts
 		return nil

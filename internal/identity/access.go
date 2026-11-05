@@ -88,8 +88,14 @@ const (
 	// Pricing, promotions and tax.
 	PermPromotionManage     Permission = "promotion.manage"      // create/change discount campaigns and coupons
 	PermPricingManualAdjust Permission = "pricing.manual_adjust" // manual price adjustments
-	PermTaxManage           Permission = "tax.manage"            // tax profile, rates, category treatment
-	PermRevenueRead         Permission = "revenue.read"
+	PermTaxManage           Permission = "tax.manage"            // tax profile: threshold and warning marks
+	PermRevenueRead         Permission = "revenue.read"          // revenue ledger, cash flow and reconciliation reports
+	// PermRevenueRecord enters and reverses revenue earned outside the
+	// website (decision D41).
+	PermRevenueRecord Permission = "revenue.record"
+	// PermPaymentReconcile marks succeeded payments and refunds as matched
+	// with the bank statement or cash book (decision D41).
+	PermPaymentReconcile Permission = "payment.reconcile"
 
 	// PermSupportHandle reads and answers every customer's support requests.
 	PermSupportHandle Permission = "support.handle"
@@ -122,14 +128,15 @@ var allPermissions = []Permission{
 	PermChargeCreate, PermChargeReverse,
 	PermRefundCreate, PermRefundApprove, PermDeductionCreate, PermDeductionApprove,
 	PermPromotionManage, PermPricingManualAdjust, PermTaxManage, PermRevenueRead,
+	PermRevenueRecord, PermPaymentReconcile,
 	PermSupportHandle, PermCustomerProfileErase,
 	PermUserRoleManage, PermUserLock, PermAuditRead, PermPolicyManage,
 }
 
 // ReferencePermissionMatrix is the owner-approved default matrix (decision
 // D22, based on docs/about_costume_rental.md §10). Production reads the
-// active, versioned matrix from configuration; migrations 000009, 000016 and
-// 000018 seed it with exactly this content.
+// active, versioned matrix from configuration; migrations 000009, 000016,
+// 000018 and 000019 seed it with exactly this content.
 func ReferencePermissionMatrix() PermissionMatrix {
 	return PermissionMatrix{
 		RoleCustomer: {
@@ -151,7 +158,8 @@ func ReferencePermissionMatrix() PermissionMatrix {
 		RoleFinance: {
 			PermBookingReadAll, PermPaymentRead, PermPaymentRecord, PermChargeReverse,
 			PermRefundCreate, PermRefundApprove, PermDeductionApprove,
-			PermFeeApprove, PermFeeWaive, PermRevenueRead, PermAuditRead, PermSupportHandle,
+			PermFeeApprove, PermFeeWaive, PermRevenueRead, PermRevenueRecord, PermPaymentReconcile,
+			PermAuditRead, PermSupportHandle,
 		},
 		RoleAdmin: slices.Clone(allPermissions),
 	}

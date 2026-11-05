@@ -1,20 +1,20 @@
-// Package tax keeps the revenue ledger and the store tax profile for an
-// individual business paying VAT directly on revenue
-// (docs/note/tax-direct-discount-policy.md).
+// Package tax keeps the revenue ledger and the annual threshold watch of an
+// individual business that the owner runs under the annual revenue threshold
+// (decision D41, docs/note/tax-policy.md).
 //
-// The system never adds a VAT line at checkout and never hard-codes a rate.
-// It classifies every revenue amount, tracks the annual revenue threshold and
-// produces an internal VAT estimate only when the accountant has confirmed
-// the rate and the treatment of every category involved. It is not a tax
-// filing and does not issue invoices; e-invoicing goes through an adapter.
+// The system computes no tax: there is no rate, no VAT line at checkout and no
+// invoice. It classifies every revenue amount, records it in an append-only
+// ledger and warns when the calendar-year revenue reaches the configured marks
+// or passes the threshold. Passing it changes nothing automatically: the owner
+// reviews the tax position with an accountant.
 package tax
 
 import (
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"webee_rentor/internal/businesstime"
 	"webee_rentor/internal/domainerr"
@@ -22,18 +22,12 @@ import (
 	"webee_rentor/internal/money"
 )
 
-type (
-	TaxpayerType string
-	VATMethod    string
-)
+type TaxpayerType string
 
-const (
-	IndividualBusiness TaxpayerType = "INDIVIDUAL_BUSINESS"
-	DirectOnRevenue    VATMethod    = "DIRECT_ON_REVENUE"
-)
+const IndividualBusiness TaxpayerType = "INDIVIDUAL_BUSINESS"
 
-// Category classifies a money flow (policy §3). The code alone never decides
-// tax treatment; Profile.Categories does, once confirmed by the accountant.
+// Category classifies a revenue amount (tax-policy §4). It is for reporting
+// and reconciliation; the system attaches no tax treatment to it.
 type Category string
 
 const (
@@ -51,134 +45,113 @@ const (
 	CatRentalSecurityDeposit Category = "RENTAL_SECURITY_DEPOSIT"
 )
 
-func (c Category) revenue() bool {
-	switch c {
-	case CatRentalRevenue, CatDeliveryService, CatCleaningService, CatLateReturnCharge,
-		CatDamageCharge, CatLostItemCompensation, CatCancellationCharge, CatOtherCharge:
-		return true
-	}
-	return false
+// RevenueCategories lists the categories a revenue entry may have.
+var RevenueCategories = []Category{
+	CatRentalRevenue, CatDeliveryService, CatCleaningService, CatLateReturnCharge,
+	CatDamageCharge, CatLostItemCompensation, CatCancellationCharge, CatOtherCharge,
 }
 
-// Treatment is the accountant-confirmed tax treatment of a category.
-type Treatment string
+func (c Category) revenue() bool { return slices.Contains(RevenueCategories, c) }
 
 const (
-	Unconfirmed Treatment = "UNCONFIRMED"
-	Taxable     Treatment = "TAXABLE"
-	NotTaxable  Treatment = "NOT_TAXABLE"
+	maxVersion  = 64
+	maxWarnings = 5
 )
-
-// DiscountBasis says whether discounts reduce the taxable base.
-type DiscountBasis string
-
-const (
-	DiscountBasisUnconfirmed DiscountBasis = "UNCONFIRMED"
-	DiscountBasisNet         DiscountBasis = "NET_OF_DISCOUNT"
-	DiscountBasisGross       DiscountBasis = "GROSS"
-)
-
-// Rate is a VAT rate in basis points (500 = 5%). There is no default.
-type Rate struct{ BasisPoints int }
 
 var (
 	ErrProfileInvalid = domainerr.New(domainerr.KindInvalid, "tax.profile_invalid", "tax profile is invalid")
 	ErrNoProfile      = domainerr.New(domainerr.KindNotFound, "tax.no_profile", "no tax profile is effective at that time")
 	ErrNotRevenue     = domainerr.New(domainerr.KindInvalid, "tax.not_revenue", "deposits are not revenue")
+	ErrRetroactive    = domainerr.New(domainerr.KindConflict, "tax.profile_retroactive", "a new tax profile version cannot start in the past")
 )
 
-// Profile is one effective version of the store tax configuration
-// (policy §2.1). Bookings and entries keep the Version they were made under.
+// Profile is one effective version of the store tax configuration. Entries
+// keep the Version they were recognised under.
 type Profile struct {
 	Version                string
 	TaxpayerType           TaxpayerType
-	VATMethod              VATMethod
 	AnnualRevenueThreshold money.Money
 	ThresholdEffectiveFrom businesstime.Date
-	ActivityCode           string
-	// VATRevenueRate is nil until the accountant confirms it.
-	VATRevenueRate *Rate
-	// Categories maps each category to its confirmed treatment; missing
-	// means Unconfirmed.
-	Categories    map[Category]Treatment
-	DiscountBasis DiscountBasis
-	// NearThresholdPercent raises the internal warning (e.g. 90 = at 90%).
-	NearThresholdPercent int
-	InvoiceRequiredMode  string
-	EffectiveFrom        time.Time
-	EffectiveUntil       *time.Time
+	// WarningPercents are the ascending shares of the threshold at which the
+	// internal warning rises (decision D41: 70, 85, 95). Passing the threshold
+	// itself is always a warning.
+	WarningPercents []int
+	EffectiveFrom   time.Time
+	// EffectiveUntil is set when a newer version takes over.
+	EffectiveUntil *time.Time
 }
 
 // Validate checks a profile.
 func (p Profile) Validate() error {
 	bad := func(why string) error { return fmt.Errorf("tax profile %s: %s: %w", p.Version, why, ErrProfileInvalid) }
 	switch {
-	case strings.TrimSpace(p.Version) == "":
-		return bad("version is required")
-	case p.TaxpayerType != IndividualBusiness || p.VATMethod != DirectOnRevenue:
-		return bad("only individual business with direct VAT on revenue is supported")
-	case !p.AnnualRevenueThreshold.Currency().Valid() || !p.AnnualRevenueThreshold.IsPositive():
-		return bad("annual revenue threshold must be positive")
+	case strings.TrimSpace(p.Version) == "" || utf8.RuneCountInString(p.Version) > maxVersion:
+		return bad("version is required, at most 64 characters")
+	case p.TaxpayerType != IndividualBusiness:
+		return bad("only an individual business is supported")
+	case p.AnnualRevenueThreshold.Currency() != money.VND || !p.AnnualRevenueThreshold.IsPositive():
+		return bad("annual revenue threshold must be a positive VND amount")
 	case !p.ThresholdEffectiveFrom.Valid():
 		return bad("threshold effective date is required")
-	case p.VATRevenueRate != nil && (p.VATRevenueRate.BasisPoints <= 0 || p.VATRevenueRate.BasisPoints > 10_000):
-		return bad("rate must be between 0 and 100%")
-	case p.NearThresholdPercent < 1 || p.NearThresholdPercent > 100:
-		return bad("near-threshold warning must be 1..100%")
+	case len(p.WarningPercents) == 0 || len(p.WarningPercents) > maxWarnings:
+		return bad("one to five warning marks are required")
 	case p.EffectiveFrom.IsZero() || (p.EffectiveUntil != nil && !p.EffectiveUntil.After(p.EffectiveFrom)):
 		return bad("effective period is invalid")
 	}
-	switch p.DiscountBasis {
-	case DiscountBasisUnconfirmed, DiscountBasisNet, DiscountBasisGross:
-	default:
-		return bad("unknown discount basis")
-	}
-	for c, t := range p.Categories {
-		if !c.revenue() || (t != Unconfirmed && t != Taxable && t != NotTaxable) {
-			return bad(fmt.Sprintf("invalid treatment for %s", c))
+	for i, w := range p.WarningPercents {
+		if w < 1 || w > 99 || (i > 0 && w <= p.WarningPercents[i-1]) {
+			return bad("warning marks must be ascending percentages between 1 and 99")
 		}
 	}
 	return nil
-}
-
-func (p Profile) treatment(c Category) Treatment {
-	if t, ok := p.Categories[c]; ok {
-		return t
-	}
-	return Unconfirmed
 }
 
 func (p Profile) covers(t time.Time) bool {
 	return !t.Before(p.EffectiveFrom) && (p.EffectiveUntil == nil || t.Before(*p.EffectiveUntil))
 }
 
-// History is the effective-dated list of profiles. Versions are appended,
-// never edited, so past bookings and entries keep their profile.
+// History is the effective-dated list of profiles, oldest first. Versions are
+// appended, never edited; the only change to a stored version is the end date
+// a newer one gives it.
 type History struct {
 	Profiles []Profile
 }
 
-// Add appends a new profile version (tax.manage). Its period must not overlap
-// existing ones.
-func (h *History) Add(p identity.Principal, prof Profile) error {
+// Add appends a new version (tax.manage) that runs from its EffectiveFrom with
+// no end, and returns the version it closes, if any. The first version may
+// start in the past so that bookings that ended before it are recognised;
+// later versions start now or later, so recognised entries never change
+// profile.
+func (h *History) Add(p identity.Principal, prof Profile, now time.Time) (*Profile, error) {
 	if err := p.Require(identity.PermTaxManage); err != nil {
-		return err
+		return nil, err
 	}
+	prof.EffectiveFrom, prof.EffectiveUntil = prof.EffectiveFrom.UTC(), nil
+	prof.WarningPercents = slices.Clone(prof.WarningPercents)
 	if err := prof.Validate(); err != nil {
-		return err
+		return nil, err
 	}
 	for _, e := range h.Profiles {
 		if e.Version == prof.Version {
-			return fmt.Errorf("version %s exists: %w", prof.Version, ErrProfileInvalid)
-		}
-		if overlaps(e, prof) {
-			return fmt.Errorf("version %s overlaps %s: %w", prof.Version, e.Version, ErrProfileInvalid)
+			return nil, fmt.Errorf("version %s exists: %w", prof.Version, ErrProfileInvalid)
 		}
 	}
-	prof.Categories = maps.Clone(prof.Categories)
+	var closed *Profile
+	if n := len(h.Profiles); n > 0 {
+		if prof.EffectiveFrom.Before(now) {
+			return nil, ErrRetroactive
+		}
+		last := &h.Profiles[n-1]
+		if last.EffectiveUntil != nil || !last.EffectiveFrom.Before(prof.EffectiveFrom) {
+			return nil, fmt.Errorf("version %s must start after %s: %w", prof.Version, last.Version, ErrProfileInvalid)
+		}
+		until := prof.EffectiveFrom
+		last.EffectiveUntil = &until
+		c := *last
+		closed = &c
+	}
 	h.Profiles = append(h.Profiles, prof)
-	slices.SortFunc(h.Profiles, func(a, b Profile) int { return a.EffectiveFrom.Compare(b.EffectiveFrom) })
-	return nil
+	return closed, nil
 }
 
 // At returns the profile effective at t.
@@ -189,10 +162,4 @@ func (h History) At(t time.Time) (Profile, error) {
 		}
 	}
 	return Profile{}, fmt.Errorf("at %s: %w", t.UTC(), ErrNoProfile)
-}
-
-func overlaps(a, b Profile) bool {
-	aEndsAfterBStarts := a.EffectiveUntil == nil || a.EffectiveUntil.After(b.EffectiveFrom)
-	bEndsAfterAStarts := b.EffectiveUntil == nil || b.EffectiveUntil.After(a.EffectiveFrom)
-	return aEndsAfterBStarts && bEndsAfterAStarts
 }

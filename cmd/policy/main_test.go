@@ -44,8 +44,6 @@ modification: { self_service_cutoff: 24h, self_service_size_changes: 1, hold_ttl
 delivery: { outbound_lead: 4h, return_transit: 4h, complaint_window: 2h }
 allocation: { allow_not_ready_for_future: false, not_ready_min_lead: 0s }
 payments: { distinct_approver_above: 500000 }
-tax:
-  version: ???
 store:
   counter_slots:
     - { id: morning, days: [mon, sun], start: "09:00", end: "12:00" }
@@ -54,6 +52,13 @@ store:
   closures:
     - { date: "2027-04-16", reason: Giỗ Tổ }
 `
+
+// The tax profile has one home, the back office (decision D41).
+func TestTaxSectionIsRefused(t *testing.T) {
+	if _, err := parse([]byte(sample + "tax:\n  version: tax-2026\n")); err == nil {
+		t.Fatal("a tax section must be refused")
+	}
+}
 
 func TestParseTurnsTheFileIntoStoredPolicies(t *testing.T) {
 	c, err := parse([]byte(sample))

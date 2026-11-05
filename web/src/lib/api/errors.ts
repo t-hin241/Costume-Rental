@@ -109,6 +109,22 @@ const messages: Record<string, string> = {
   'promotions.not_combinable': 'Các ưu đãi này không dùng chung được.',
   'promotions.campaign_invalid': 'Thông tin khuyến mãi chưa hợp lệ. Vui lòng kiểm tra mã, giá trị và thời gian hiệu lực.',
 
+  'payments.not_reconcilable': 'Chỉ đối soát được khoản thu hoặc hoàn đã thành công.',
+  'payments.already_reconciled': 'Giao dịch này đã được đối soát.',
+  'payments.reconciliation_revoked': 'Lần đối soát này đã được hủy.',
+
+  'tax.profile_invalid': 'Hồ sơ thuế chưa hợp lệ. Kiểm tra phiên bản, ngưỡng và các mốc cảnh báo (tăng dần, từ 1 đến 99%).',
+  'tax.profile_retroactive': 'Phiên bản mới phải có hiệu lực từ hôm nay trở đi.',
+  'tax.profile_conflict': 'Vừa có người lưu hồ sơ thuế khác. Vui lòng tải lại và thử lại.',
+  'tax.no_profile': 'Chưa có hồ sơ thuế cho thời điểm này.',
+  'tax.not_revenue': 'Tiền bảo đảm và tiền giữ lịch không phải doanh thu.',
+  'tax.entry_invalid': 'Thông tin doanh thu chưa hợp lệ. Cần nhập kênh bán và số tiền.',
+  'tax.entry_future': 'Không ghi doanh thu cho ngày trong tương lai.',
+  'tax.entry_not_manual': 'Doanh thu của đơn thuê đi theo sổ tiền của đơn; hãy sửa khoản thu trong đơn.',
+  'tax.entry_reversed': 'Bút toán này đã được đảo.',
+  'tax.entry_is_reversal': 'Không đảo được một bút toán đảo.',
+  'tax.export_too_large': 'Quá nhiều dòng. Hãy xuất khoảng thời gian ngắn hơn.',
+
   'support.resolved': 'Yêu cầu này đã được giải quyết.',
 
   'delivery.out_of_service_area': 'Địa chỉ nằm ngoài khu vực giao nhận.',

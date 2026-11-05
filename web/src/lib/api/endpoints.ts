@@ -5,6 +5,8 @@ import type {
   FulfillmentOptions, LoginResult, MFAEnrollment, Money, OfferingDetail, OfferingKind, OfferingPage, OpsAlerts, OpsOverview, Page,
   PaymentChannel, PaymentMethod, PaymentPurpose, PaymentSession, PermissionMatrix, PolicyDocument, Profile, ProfileReview, PublicPolicy, Quote, RentalPackage, Role, ScheduleEvent, Session, StoreCalendar,
   StoreInfo, SupportRequest, SupportTopic, User,
+  CashFlow, ManualRevenueInput, Reconciliation, ReconciliationReport, ReportGroup, RevenueEntry, RevenueQuery, RevenueReportRow, RevenueYear,
+  TaxProfile, TaxProfileInput, Transaction, TxnKind,
 } from './types';
 
 // Accounts and access.
@@ -226,4 +228,32 @@ export const adminApi = {
   campaigns: () => api<Campaign[]>('/admin/promotions'),
   saveCampaign: (id: string | null, body: Omit<Campaign, 'id' | 'used'>) =>
     id ? api<Campaign>(`/admin/promotions/${id}`, { method: 'PUT', body }) : api<Campaign>('/admin/promotions', { method: 'POST', body }),
+};
+
+/** Decision D41: the tax profile, the revenue ledger and the finance reports. */
+export const revenueApi = {
+  profiles: () => api<{ items: TaxProfile[] }>('/admin/tax/profiles'),
+  addProfile: (body: TaxProfileInput) => api<TaxProfile>('/admin/tax/profiles', { method: 'POST', body }),
+  year: (year?: number) => api<RevenueYear>('/admin/revenue/year', { query: { year } }),
+  report: (query: { from: string; to: string; group: ReportGroup }) =>
+    api<{ group: ReportGroup; rows: RevenueReportRow[] }>('/admin/revenue/report', { query: { ...query } }),
+  entries: (query: RevenueQuery) => api<Page<RevenueEntry>>('/admin/revenue/entries', { query: { ...query } }),
+  /** A plain link: the browser downloads the CSV with the session cookie. */
+  exportURL: (query: RevenueQuery) => {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') params.set(k, String(v));
+    return `${import.meta.env.VITE_API_BASE_URL ?? ''}/api/v1/admin/revenue/entries.csv?${params}`;
+  },
+  addEntry: (body: ManualRevenueInput) => api<RevenueEntry>('/admin/revenue/entries', { method: 'POST', body }),
+  reverseEntry: (id: string, reason: string) =>
+    api<RevenueEntry>(`/admin/revenue/entries/${encodeURIComponent(id)}/reverse`, { method: 'POST', body: { reason } }),
+  cashFlow: (query: { from: string; to: string }) => api<CashFlow>('/admin/finance/cash-flow', { query: { ...query } }),
+  reconciliation: (query: { from: string; to: string }) =>
+    api<ReconciliationReport>('/admin/finance/reconciliation', { query: { ...query } }),
+  transactions: (query: { from: string; to: string; kind?: TxnKind | ''; reconciled?: 'true' | 'false' | ''; page?: number; page_size?: number }) =>
+    api<Page<Transaction>>('/admin/finance/transactions', { query: { ...query } }),
+  reconcile: (kind: TxnKind, id: string, body: { statement_ref: string; note: string }) =>
+    api<Reconciliation>(`/admin/finance/transactions/${kind.toLowerCase()}/${encodeURIComponent(id)}/reconcile`, { method: 'POST', body }),
+  revokeReconciliation: (id: string, reason: string) =>
+    api<void>(`/admin/finance/reconciliations/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: { reason } }),
 };

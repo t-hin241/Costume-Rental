@@ -1,6 +1,6 @@
 import { http, HttpResponse, type HttpHandler } from 'msw';
 import type {
-  AssetAction, AssetStatus, Availability, BookingInput, BookingItem, BookingLine, CalendarDay, Condition, Dashboard, FeeKind, OfferingCard, Page, PaymentChannel, PaymentPurpose, PaymentSession, PublicPolicy, Quote, Role, Session, ChargeKind,
+  AssetAction, AssetStatus, Availability, BookingInput, ManualRevenueInput, Reconciliation, RevenueCategory, RevenueEntry, TaxProfile, TaxProfileInput, Transaction, TxnKind, BookingItem, BookingLine, CalendarDay, Condition, Dashboard, FeeKind, OfferingCard, Page, PaymentChannel, PaymentPurpose, PaymentSession, PublicPolicy, Quote, Role, Session, ChargeKind,
 } from '../lib/api/types';
 import { addBusinessDays, businessToday } from '../lib/format';
 import { actionsFor, assetActions, bundleCard, bundleDeposit, bundleDetail, conditionToAsset, db, demoPassword, detailOf, financeOf, isOverdue, itemCard, itemDetail, nextCode, paymentOptions, persist, summaryOf, vnd, type MockBooking, type MockPaymentSession } from './db';
@@ -365,6 +365,49 @@ function publicPolicy(): PublicPolicy {
     reschedule_cutoff_hours: p.booking.reschedule_cutoff_hours, modification_cutoff_hours: p.modification.self_service_cutoff_hours,
   };
 }
+
+// ---- Revenue (decision D41) ----
+// Kept in memory only: the mock rebuilds booking revenue from the mock ledgers
+// and keeps manual entries and reconciliations until the page reloads.
+
+const revenueOf: Partial<Record<string, RevenueCategory>> = {
+  RENT: 'RENTAL_REVENUE', DELIVERY_FEE: 'DELIVERY_SERVICE', REDELIVERY_FEE: 'DELIVERY_SERVICE', CLEANING_FEE: 'CLEANING_SERVICE',
+  LATE_FEE: 'LATE_RETURN_CHARGE', DAMAGE_FEE: 'DAMAGE_CHARGE', LOSS_FEE: 'LOST_ITEM_COMPENSATION', CANCELLATION_FEE: 'CANCELLATION_CHARGE', OTHER_FEE: 'OTHER_CHARGE',
+};
+const revenue = {
+  profiles: [{
+    version: 'tax-2026', taxpayer_type: 'INDIVIDUAL_BUSINESS', annual_revenue_threshold: vnd(1_000_000_000), threshold_effective_from: '2026-01-01',
+    warning_percents: [70, 85, 95], effective_from: '2025-12-31T17:00:00Z', effective_until: null,
+  }] as TaxProfile[],
+  manual: [] as RevenueEntry[],
+  marks: new Map<string, Reconciliation>(),
+};
+
+function revenueEntries(): RevenueEntry[] {
+  const booked = db.bookings.filter((b) => ['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(b.status)).flatMap((b) =>
+    b.charges.filter((c) => !c.reversed && revenueOf[c.kind] && c.amount > 0).map((c): RevenueEntry => ({
+      id: `rev:${c.id}`, source: 'BOOKING', booking_id: b.id, booking_code: b.code, category: revenueOf[c.kind]!,
+      list: vnd(c.amount), discount: vnd(0), net: vnd(c.amount), recognized_at: b.returned_at ?? b.created_at, profile_version: 'tax-2026',
+      reverses: null, reason: null, channel: null, note: null, document_ref: null, recorded_by: null,
+    })));
+  return [...booked, ...revenue.manual].sort((a, b) => b.recognized_at.localeCompare(a.recognized_at));
+}
+
+function inPeriod(url: URL, at: string) {
+  const day = at.slice(0, 10);
+  return day >= (url.searchParams.get('from') ?? '') && day <= (url.searchParams.get('to') ?? '9999');
+}
+
+function transactions(): Transaction[] {
+  return db.bookings.flatMap((b) => [
+    ...b.payments.map((p): Transaction => ({ kind: 'PAYMENT', id: p.id, booking_id: b.id, booking_code: b.code, method: p.method, reference: null,
+      amount: vnd(p.amount), buckets: [p.bucket], at: p.at, reconciliation: revenue.marks.get(`PAYMENT:${p.id}`) ?? null })),
+    ...b.refunds.filter((r) => r.status === 'SUCCEEDED').map((r): Transaction => ({ kind: 'REFUND', id: r.id, booking_id: b.id, booking_code: b.code,
+      method: 'CASH', reference: null, amount: r.amount, buckets: [r.bucket], at: r.at, reconciliation: revenue.marks.get(`REFUND:${r.id}`) ?? null })),
+  ]).sort((a, b) => b.at.localeCompare(a.at));
+}
+
+const sum = (rows: { amount: number }[]) => vnd(rows.reduce((n, r) => n + r.amount, 0));
 
 const get = (path: string, fn: Parameters<typeof route>[0]) => http.get(`${base}${path}`, route(fn) as never);
 const post = (path: string, fn: Parameters<typeof route>[0]) => http.post(`${base}${path}`, route(fn) as never);
@@ -827,6 +870,163 @@ export const handlers: HttpHandler[] = [
     return json(s);
   }),
 
+  // Revenue and reconciliation (decision D41)
+  get('/admin/tax/profiles', () => {
+    requirePerm('revenue.read', 'tax.manage');
+    return json({ items: revenue.profiles });
+  }),
+  post('/admin/tax/profiles', async ({ request }) => {
+    const { user } = requirePerm('tax.manage');
+    const body = await request.json() as TaxProfileInput;
+    const marks = body.warning_percents;
+    if (!body.version || marks.length === 0 || marks.some((m, i) => m < 1 || m > 99 || (i > 0 && m <= marks[i - 1]!))) return fail(400, 'tax.profile_invalid');
+    if (body.effective_from < businessToday()) return fail(409, 'tax.profile_retroactive');
+    const from = new Date(`${body.effective_from}T00:00:00+07:00`).toISOString();
+    const last = revenue.profiles.at(-1);
+    if (last) last.effective_until = from;
+    const p: TaxProfile = { ...body, taxpayer_type: 'INDIVIDUAL_BUSINESS', effective_from: from, effective_until: null };
+    revenue.profiles.push(p);
+    audit(user.full_name, 'tax.profile_added', 'tax_profile', p.version);
+    return json(p, 201);
+  }),
+  get('/admin/revenue/year', ({ request }) => {
+    requirePerm('revenue.read');
+    const year = Number(new URL(request.url).searchParams.get('year')) || Number(businessToday().slice(0, 4));
+    const p = revenue.profiles.at(-1)!;
+    const rows = revenueEntries().filter((e) => e.recognized_at.startsWith(String(year)));
+    const total = rows.reduce((n, e) => n + e.net.amount, 0);
+    const th = p.annual_revenue_threshold.amount;
+    const mark = [...p.warning_percents].reverse().find((m) => total > 0 && total * 100 >= th * m) ?? 0;
+    const by = new Map<RevenueCategory, number>();
+    rows.forEach((e) => by.set(e.category, (by.get(e.category) ?? 0) + e.net.amount));
+    return json({
+      year, has_profile: true, pending_bookings: 0, profile_version: p.version, list: sum(rows.map((e) => e.list)), discount: sum(rows.map((e) => e.discount)),
+      revenue: vnd(total), threshold: p.annual_revenue_threshold, percent: Math.floor((total * 100) / th),
+      level: total > th ? 'EXCEEDED' : mark ? 'WARNING' : 'BELOW', mark, marks: p.warning_percents,
+      by_category: [...by].map(([category, amount]) => ({ category, amount: vnd(amount) })),
+    });
+  }),
+  get('/admin/revenue/report', ({ request }) => {
+    requirePerm('revenue.read');
+    const url = new URL(request.url);
+    const group = url.searchParams.get('group') ?? 'month';
+    const start = (d: string) => group === 'day' ? d : group === 'year' ? `${d.slice(0, 4)}-01-01`
+      : group === 'quarter' ? `${d.slice(0, 4)}-${String(Math.floor((Number(d.slice(5, 7)) - 1) / 3) * 3 + 1).padStart(2, '0')}-01` : `${d.slice(0, 7)}-01`;
+    const rows = new Map<string, { period: string; category: RevenueCategory; entries: number; list: number; discount: number; net: number }>();
+    revenueEntries().filter((e) => inPeriod(url, e.recognized_at)).forEach((e) => {
+      const period = start(e.recognized_at.slice(0, 10));
+      const key = `${period}|${e.category}`;
+      const r = rows.get(key) ?? { period, category: e.category, entries: 0, list: 0, discount: 0, net: 0 };
+      r.entries++; r.list += e.list.amount; r.discount += e.discount.amount; r.net += e.net.amount;
+      rows.set(key, r);
+    });
+    return json({ group, rows: [...rows.values()].sort((a, b) => a.period.localeCompare(b.period))
+      .map((r) => ({ ...r, list: vnd(r.list), discount: vnd(r.discount), net: vnd(r.net) })) });
+  }),
+  get('/admin/revenue/entries', ({ request }) => {
+    requirePerm('revenue.read');
+    const url = new URL(request.url);
+    const q = url.searchParams;
+    return json(paged(revenueEntries().filter((e) => inPeriod(url, e.recognized_at) && (!q.get('source') || e.source === q.get('source'))
+      && (!q.get('category') || e.category === q.get('category')) && (!q.get('booking') || e.booking_code === q.get('booking'))), url));
+  }),
+  get('/admin/revenue/entries.csv', ({ request }) => {
+    requirePerm('revenue.read');
+    const url = new URL(request.url);
+    const lines = revenueEntries().filter((e) => inPeriod(url, e.recognized_at))
+      .map((e) => [e.recognized_at.slice(0, 10), e.id, e.source, e.booking_code ?? '', e.category, e.net.amount].join(','));
+    return new HttpResponse(['recognized_date,entry_id,source,booking_code,category,net', ...lines].join('\n'), { headers: { 'Content-Type': 'text/csv; charset=utf-8' } });
+  }),
+  post('/admin/revenue/entries', async ({ request }) => {
+    const { user } = requirePerm('revenue.record');
+    const body = await request.json() as ManualRevenueInput;
+    if (!body.channel.trim() || body.amount.amount <= 0) return fail(400, 'tax.entry_invalid');
+    if (body.date > businessToday()) return fail(400, 'tax.entry_future');
+    const e: RevenueEntry = { id: `m${Date.now()}`, source: 'MANUAL', booking_id: null, booking_code: null, category: body.category, list: body.amount,
+      discount: vnd(0), net: body.amount, recognized_at: new Date(`${body.date}T00:00:00+07:00`).toISOString(), profile_version: 'tax-2026',
+      reverses: null, reason: null, channel: body.channel.trim(), note: body.note || null, document_ref: body.document_ref || null, recorded_by: user.id };
+    revenue.manual.push(e);
+    audit(user.full_name, 'revenue.manual_recorded', 'revenue_entry', e.id);
+    return json(e, 201);
+  }),
+  post('/admin/revenue/entries/:id/reverse', async ({ params, request }) => {
+    const { user } = requirePerm('revenue.record');
+    const { reason } = await request.json() as { reason: string };
+    const e = revenue.manual.find((x) => x.id === params.id);
+    if (!e) return fail(404, 'storage.not_found');
+    if (e.reverses) return fail(409, 'tax.entry_is_reversal');
+    if (revenue.manual.some((x) => x.reverses === e.id)) return fail(409, 'tax.entry_reversed');
+    const neg = (m: { amount: number }) => vnd(-m.amount);
+    const r: RevenueEntry = { ...e, id: `m${Date.now()}`, list: neg(e.list), discount: neg(e.discount), net: neg(e.net), recognized_at: new Date().toISOString(),
+      reverses: e.id, reason, recorded_by: user.id };
+    revenue.manual.push(r);
+    audit(user.full_name, 'revenue.manual_reversed', 'revenue_entry', e.id, reason);
+    return json(r, 201);
+  }),
+  get('/admin/finance/cash-flow', ({ request }) => {
+    requirePerm('revenue.read');
+    const url = new URL(request.url);
+    const tx = transactions().filter((t) => inPeriod(url, t.at));
+    const moved = (kind: TxnKind) => {
+      const by = new Map<string, Transaction[]>();
+      tx.filter((t) => t.kind === kind).forEach((t) => {
+        const key = `${t.method}|${t.buckets[0]}`;
+        by.set(key, [...(by.get(key) ?? []), t]);
+      });
+      return [...by.values()].map((ts) => ({ method: ts[0]!.method, bucket: ts[0]!.buckets[0]!, count: ts.length, amount: sum(ts.map((t) => t.amount)) }));
+    };
+    const open = db.bookings.filter((b) => !['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(b.status));
+    const held = (bk: string) => sum(open.flatMap((b) => b.payments.filter((p) => p.bucket === bk)));
+    const waiting = db.bookings.flatMap((b) => b.refunds.filter((r) => ['REQUESTED', 'APPROVED', 'PROCESSING'].includes(r.status)).map((r) => r.amount));
+    return json({
+      received: moved('PAYMENT'), refunded: moved('REFUND'),
+      position: { security_held: held('SECURITY'), reservation_held: held('RESERVATION'), owed_ended: vnd(0), owed_ended_bookings: 0, due_open: vnd(0),
+        pending_refunds: sum(waiting), pending_payments: vnd(0), overpaid: vnd(0) },
+    });
+  }),
+  get('/admin/finance/reconciliation', ({ request }) => {
+    requirePerm('revenue.read');
+    const url = new URL(request.url);
+    const tx = transactions().filter((t) => inPeriod(url, t.at));
+    const open = tx.filter((t) => !t.reconciliation);
+    const entries = revenueEntries().filter((e) => inPeriod(url, e.recognized_at));
+    const other = entries.filter((e) => e.category === 'OTHER_CHARGE');
+    return json({
+      recognised: sum(entries.map((e) => e.net)), received: sum(tx.filter((t) => t.kind === 'PAYMENT').map((t) => t.amount)),
+      refunded: sum(tx.filter((t) => t.kind === 'REFUND').map((t) => t.amount)),
+      ended_bookings: db.bookings.filter((b) => ['COMPLETED', 'CANCELLED', 'EXPIRED'].includes(b.status)).length,
+      mismatched: { items: [], total: 0 }, unreconciled: { items: open.slice(0, 50), total: open.length },
+      attention: { items: [], total: 0 }, unrecognised: { items: [], total: 0 }, other_charges: { items: other, total: other.length },
+    });
+  }),
+  get('/admin/finance/transactions', ({ request }) => {
+    requirePerm('revenue.read');
+    const url = new URL(request.url);
+    const kind = url.searchParams.get('kind') ?? '';
+    const done = url.searchParams.get('reconciled') ?? '';
+    return json(paged(transactions().filter((t) => inPeriod(url, t.at) && (!kind || t.kind === kind)
+      && (!done || (t.reconciliation !== null) === (done === 'true'))), url));
+  }),
+  post('/admin/finance/transactions/:kind/:id/reconcile', async ({ params, request }) => {
+    const { user } = requirePerm('payment.reconcile');
+    const body = await request.json() as { statement_ref: string; note: string };
+    const key = `${String(params.kind).toUpperCase()}:${String(params.id)}`;
+    if (!transactions().some((t) => `${t.kind}:${t.id}` === key)) return fail(409, 'payments.not_reconcilable');
+    if (revenue.marks.has(key)) return fail(409, 'payments.already_reconciled');
+    const r: Reconciliation = { id: `rc${Date.now()}`, statement_ref: body.statement_ref, note: body.note || null, by: user.id, at: new Date().toISOString() };
+    revenue.marks.set(key, r);
+    audit(user.full_name, 'payment.reconciled', 'reconciliation', r.id);
+    return json(r, 201);
+  }),
+  post('/admin/finance/reconciliations/:id/revoke', async ({ params, request }) => {
+    const { user } = requirePerm('payment.reconcile');
+    const { reason } = await request.json() as { reason: string };
+    const key = [...revenue.marks].find(([, r]) => r.id === params.id)?.[0];
+    if (!key) return fail(404, 'storage.not_found');
+    revenue.marks.delete(key);
+    audit(user.full_name, 'payment.reconciliation_revoked', 'reconciliation', String(params.id), reason);
+    return none();
+  }),
   // Admin
   get('/admin/dashboard', ({ request }) => {
     requirePerm('revenue.read', 'policy.manage');

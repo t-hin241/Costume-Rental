@@ -104,6 +104,19 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `POST`/`PUT /admin/catalog/categories`, `/packages` | `catalog.manage` |
 | `GET /admin/policies/active`, `POST /admin/policies` | `policy.manage`. Luật không có trên màn hình (phí chủ động hủy, giao nhận) được giữ nguyên khi xuất bản |
 | `GET`/`POST`/`PUT /admin/promotions` | `promotion.manage`. `valid_until` là ngày cuối còn hiệu lực |
+| `GET /admin/tax/profiles` | `revenue.read` hoặc `tax.manage`. Lịch sử hồ sơ thuế, cũ nhất trước (D41) |
+| `POST /admin/tax/profiles` | `tax.manage`. `{ version, annual_revenue_threshold, threshold_effective_from, warning_percents, effective_from }`; mốc tăng dần trong 1..99. Phiên bản đầu được bắt đầu trong quá khứ; sau đó phải từ hôm nay (`409 tax.profile_retroactive`); tự đóng phiên bản đang mở. Trả `201` |
+| `GET /admin/revenue/year?year=` | `revenue.read`. Mặc định năm hiện tại. `has_profile: false` khi chưa có hồ sơ; `level` `BELOW`/`WARNING`/`EXCEEDED`, `mark` là mốc cao nhất đã chạm, `percent` làm tròn xuống, `pending_bookings` là số đơn đã kết thúc chưa ghi nhận |
+| `GET /admin/revenue/report?from&to&group=` | `revenue.read`. `group` `day` (tối đa 366 ngày), `month`, `quarter`, `year`; mỗi dòng là kỳ (ngày đầu kỳ) × nhóm, có `list`, `discount`, `net` |
+| `GET /admin/revenue/entries?from&to&category&source&booking&page` | `revenue.read`. Bút toán mới nhất trước; `booking` là mã đơn chính xác |
+| `GET /admin/revenue/entries.csv?from&to&category&source&booking` | `revenue.read`. CSV UTF-8 có BOM, tối đa 50.000 dòng (`400 tax.export_too_large`), mỗi lần xuất ghi audit |
+| `POST /admin/revenue/entries` | `revenue.record`. Doanh thu ngoài website `{ category, amount, date, channel, note, document_ref }`; ngày tương lai `400 tax.entry_future`, nhóm tiền cọc `400 tax.not_revenue`, chưa có hồ sơ `404 tax.no_profile`. Trả `201` |
+| `POST /admin/revenue/entries/{id}/reverse` (bắt buộc `reason`) | `revenue.record`. Chỉ bút toán tay: bút toán đơn thuê `409 tax.entry_not_manual`, đã đảo `409 tax.entry_reversed`. Trả `201` bút toán đảo |
+| `GET /admin/finance/cash-flow?from&to` | `revenue.read`. `received`, `refunded` theo phương thức và khoản trong kỳ; `position` là số dư hiện tại trên mọi đơn |
+| `GET /admin/finance/reconciliation?from&to` | `revenue.read`. Tối đa 366 ngày. Mỗi mục gồm `items` (tối đa 50) và `total`: `mismatched` (`NOT_RECOGNISED`, `OWED`, `OVERPAID`), `unreconciled`, `attention`, `unrecognised`, `other_charges` |
+| `GET /admin/finance/transactions?from&to&kind&reconciled&page` | `revenue.read`. Khoản thu và hoàn đã thành công theo lúc tiền đi; `kind` `PAYMENT`/`REFUND`, `reconciled` `true`/`false` |
+| `POST /admin/finance/transactions/{kind}/{id}/reconcile` | `payment.reconcile`. `kind` là `payment` hoặc `refund`; `{ statement_ref, note }`. Chưa thành công `409 payments.not_reconcilable`, đã đối soát `409 payments.already_reconciled`. Trả `201` |
+| `POST /admin/finance/reconciliations/{id}/revoke` (bắt buộc `reason`) | `payment.reconcile`. Trả `204`; giao dịch trở lại danh sách chưa đối soát |
 
 ## 3. Chưa chạy
 
@@ -112,7 +125,6 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | Thanh toán trực tuyến | `online_payment_available: false`, `payment_options` rỗng. `POST /bookings/{id}/payment-sessions` và `GET /payment-sessions/{id}` trả `409 payments.gateway_unavailable`. Khách thanh toán tại quầy hoặc chuyển khoản, nhân viên ghi nhận | Chọn nhà cung cấp cổng, viết adapter và webhook (mục 4) |
 | Giao nhận tận nơi | Chỉ trả `STORE`; đặt chiều `COURIER` bị từ chối | Nối `delivery` vào `PlaceBooking`, adapter carrier, khu vực phục vụ |
 | Ưu đãi thành viên | Form không cho tạo `MEMBER_DISCOUNT` vì cần phân khúc khách | Định nghĩa phân khúc |
-| Thuế | `tax` trong `config/policy.yaml` không được nạp, doanh thu dashboard không đi qua `tax.RecognizeLedger` | Kế toán chốt A33 |
 
 ## 4. Thanh toán trực tuyến
 

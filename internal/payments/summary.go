@@ -159,51 +159,75 @@ func (s Summary) IsSettled() bool {
 		s.PendingPayments.IsZero() && s.PendingRefunds.IsZero() && s.PendingDeductions.IsZero()
 }
 
-// Summary derives balances from every record.
-func (l *Ledger) Summary() Summary {
-	required := map[Bucket]int64{}
+// Totals are the sums a Summary is derived from. Reports that read many
+// ledgers sum them in the database and derive the same Summary.
+type Totals struct {
+	// Required is active (not reversed) charges per bucket.
+	Required      map[Bucket]int64
+	Received      map[Bucket]int64
+	Pending       map[Bucket]int64
+	Refunded      map[Bucket]int64
+	PendingRefund map[Bucket]int64
+	// SecurityApplied is approved deductions; PendingDeductions proposed ones.
+	SecurityApplied    int64
+	PendingDeductions  int64
+	ReservationApplied int64
+	CreditsRent        bool
+}
+
+// Totals sums the records of the ledger.
+func (l *Ledger) Totals() Totals {
+	t := Totals{
+		Required: map[Bucket]int64{}, Received: map[Bucket]int64{}, Pending: map[Bucket]int64{},
+		Refunded: map[Bucket]int64{}, PendingRefund: map[Bucket]int64{}, CreditsRent: l.CreditReservationToRent,
+	}
 	for _, c := range l.Charges {
 		if c.Reversal == nil {
-			required[c.Kind.Bucket()] += c.Amount.Amount()
+			t.Required[c.Kind.Bucket()] += c.Amount.Amount()
 		}
 	}
-	received := map[Bucket]int64{}
-	pending := map[Bucket]int64{}
 	for _, p := range l.Payments {
 		for _, pt := range p.Portions {
 			switch p.Status {
 			case PaymentSucceeded:
-				received[pt.Bucket] += pt.Amount.Amount()
+				t.Received[pt.Bucket] += pt.Amount.Amount()
 			case PaymentPending:
-				pending[pt.Bucket] += pt.Amount.Amount()
+				t.Pending[pt.Bucket] += pt.Amount.Amount()
 			}
 		}
 	}
-	refunded := map[Bucket]int64{}
-	pendingRefund := map[Bucket]int64{}
 	for _, r := range l.Refunds {
 		switch {
 		case r.Status == RefundSucceeded:
-			refunded[r.Bucket] += r.Amount.Amount()
+			t.Refunded[r.Bucket] += r.Amount.Amount()
 		case r.Status.pending():
-			pendingRefund[r.Bucket] += r.Amount.Amount()
+			t.PendingRefund[r.Bucket] += r.Amount.Amount()
 		}
 	}
-	var secApplied, pendingDed int64
 	for _, d := range l.Deductions {
 		switch d.Status {
 		case DeductionApproved:
-			secApplied += d.Amount.Amount()
+			t.SecurityApplied += d.Amount.Amount()
 		case DeductionProposed:
-			pendingDed += d.Amount.Amount()
+			t.PendingDeductions += d.Amount.Amount()
 		}
 	}
-	var resApplied int64
 	for _, r := range l.Resolutions {
 		if r.Kind == ResolutionAppliedToRental {
-			resApplied += r.Amount.Amount()
+			t.ReservationApplied += r.Amount.Amount()
 		}
 	}
+	return t
+}
+
+// Summary derives balances from every record.
+func (l *Ledger) Summary() Summary { return l.Totals().Summary(l.Currency) }
+
+// Summary derives the balances from the sums.
+func (t Totals) Summary(c money.Currency) Summary {
+	required, received, pending, refunded, pendingRefund := t.Required, t.Received, t.Pending, t.Refunded, t.PendingRefund
+	secApplied, pendingDed, resApplied := t.SecurityApplied, t.PendingDeductions, t.ReservationApplied
+	l := &Ledger{Currency: c, CreditReservationToRent: t.CreditsRent}
 
 	rentalPaid := received[BucketRental] - refunded[BucketRental]
 	covered := rentalPaid + secApplied + resApplied

@@ -17,6 +17,7 @@ import (
 	"webee_rentor/internal/platform/postgres"
 	"webee_rentor/internal/rentals"
 	"webee_rentor/internal/rentals/rentalspg"
+	"webee_rentor/internal/tax/taxapp"
 )
 
 // Confirm confirms a pending booking once the snapshot policy's funds
@@ -89,6 +90,9 @@ func (s *Service) ExpireHolds(ctx context.Context, limit int) (int, error) {
 				return err
 			}
 			if _, err := rentalspg.SaveBooking(ctx, tx, b, v, "", now); err != nil {
+				return err
+			}
+			if _, err := taxapp.SyncBooking(ctx, tx, b, now); err != nil {
 				return err
 			}
 			changed, expired, done = true, b, append([]rentals.Transition{t}, ts...)
