@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"webee_rentor/internal/platform/postgres/pgtest"
 )
 
 type refBody struct {
@@ -141,5 +143,63 @@ func TestBadCategoriesAreRefused(t *testing.T) {
 	s.send(s.a, "POST", "/admin/catalog/items", s.itemBody("e", many[:10]...), http.StatusCreated)
 	if n := s.count(`SELECT count(*) FROM catalog_items WHERE slug = ANY($1)`, []string{s.f.Prefix + "-a", s.f.Prefix + "-b", s.f.Prefix + "-c", s.f.Prefix + "-d"}); n != 0 {
 		t.Fatalf("%d refused items were saved", n)
+	}
+}
+
+// D37: revenue on the dashboard is what the shop keeps for good, on the day a
+// booking ended. Rent of a cancelled booking, deposits and open bookings are not.
+func TestDashboardRevenueCountsWhatTheShopKeeps(t *testing.T) {
+	s := newShop(t)
+	// Tests share a database, so each step is measured against the day before it.
+	earned := func(date string) int64 {
+		d := decode[struct {
+			Series []struct {
+				Date    string
+				Revenue moneyBody
+			} `json:"revenue_series"`
+		}](t, s.send(s.a, "GET", "/admin/dashboard?range_days=30", "", http.StatusOK))
+		for _, day := range d.Series {
+			if day.Date == date {
+				return day.Revenue.Amount
+			}
+		}
+		t.Fatalf("%s is not on the dashboard", date)
+		return 0
+	}
+
+	// Cancelled two days before pickup: the 30% fee stays, the rent does not.
+	asset := string(s.f.Assets(s.c.JacketM, 1)[0])
+	b := decode[detailBody](t, s.send(s.customer, "POST", "/bookings", s.order(s.c.JacketM, "2026-11-03", "kept", ""), http.StatusCreated))
+	path := "/bookings/" + b.ID
+	before := earned("2026-11-01")
+	s.act(s.money, path+"/payments", pay("p1", "CASH", map[string]int64{"RESERVATION": 15_000}))
+	s.act(s.staff, path+"/confirm", "")
+	if got := earned("2026-11-01"); got != before {
+		t.Fatalf("a payment moved revenue from %d to %d", before, got)
+	}
+	s.act(s.customer, path+"/cancel", `{"reason":"CUSTOMER_REQUEST","note":"Đổi kế hoạch"}`)
+	if got := earned("2026-11-01"); got != before+15_000 {
+		t.Fatalf("after the cancellation: %d, want %d", got, before+15_000)
+	}
+
+	// Nothing is earned while the jacket is out or being checked.
+	rented := "/bookings/" + s.place(s.customer, "k1", "").ID
+	s.handOver(rented, asset)
+	s.shop.Set(pgtest.Now.AddDate(0, 0, 11))
+	before = earned("2026-11-12")
+	s.act(s.staff, rented+"/returns", fmt.Sprintf(`{"asset_ids":[%q]}`, asset))
+	s.act(s.staff, rented+"/inspections", fmt.Sprintf(`{"asset_id":%q,"conditions":["NORMAL_WEAR"],"notes":"","evidence":[]}`, asset))
+	settled := s.act(s.money, rented+"/settle", "")
+	s.act(s.money, rented+"/refunds/"+settled.Finance.Refunds[0].ID+"/payout", `{"method":"CASH","reference":"","paid_at":"2026-11-12T01:00:00Z"}`)
+	if got := earned("2026-11-12"); got != before {
+		t.Fatalf("revenue moved from %d to %d before completion", before, got)
+	}
+
+	// Completed: the whole rent, never the 300,000đ deposit.
+	if got := s.act(s.staff, rented+"/complete", ""); got.Status != "COMPLETED" {
+		t.Fatalf("complete = %s", got.Status)
+	}
+	if got := earned("2026-11-12"); got != before+50_000 {
+		t.Fatalf("after completion: %d, want %d", got, before+50_000)
 	}
 }

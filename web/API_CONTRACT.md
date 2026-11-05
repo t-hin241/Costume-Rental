@@ -132,7 +132,7 @@ Trạng thái session dùng `PaymentStatus` hiện có. Khoản `PENDING` đư�
 - **Tỷ lệ tài sản đang thuê**: số asset `RENTED` trên số asset còn phục vụ, không tính `RETIRED`.
 - **Khách có đơn**: số khách khác nhau có đơn tạo trong kỳ.
 
-Đây là giả định A41, chờ chủ sản phẩm chốt.
+Công thức đã chốt (D37). Con số để quản trị xem, không dùng cho khai thuế. Ngưỡng doanh thu năm lấy từ sổ doanh thu (`GET /admin/revenue/year`, D41), không từ con số này.
 
 ## 6. Cảnh báo vận hành
 
