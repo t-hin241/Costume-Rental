@@ -10,6 +10,7 @@ import (
 	"webee_rentor/internal/audit"
 	"webee_rentor/internal/audit/auditpg"
 	"webee_rentor/internal/businesstime"
+	"webee_rentor/internal/delivery"
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/identity/identitypg"
@@ -38,11 +39,14 @@ const maxCalendarDays = 62
 
 // Calendar lists which days and slots can be booked now in [from, to]. Days
 // outside the booking horizon are closed, so clients need no policy of their own.
-func (s *Service) Calendar(ctx context.Context, from, to businesstime.Date) (Calendar, error) {
+// With a courier outbound the slots are the delivery windows, and none are
+// offered while no delivery area is loaded (decision D43).
+func (s *Service) Calendar(ctx context.Context, from, to businesstime.Date, outbound rentals.LegMode) (Calendar, error) {
 	cfg, err := s.config(ctx, s.pool)
 	if err != nil {
 		return Calendar{}, err
 	}
+	cfg.courier = outbound == rentals.LegCourier
 	reasons, err := rentalspg.ClosureReasons(ctx, s.pool)
 	if err != nil {
 		return Calendar{}, err
@@ -89,16 +93,54 @@ func (s *Service) Calendar(ctx context.Context, from, to businesstime.Date) (Cal
 	return out, nil
 }
 
-// bookableSlots keeps the slots of a day that start inside the booking horizon.
+// bookableSlots keeps the slots of a day whose rental starts inside the
+// booking horizon: a counter slot at its start, a delivery window at its end.
 func (s *Service) bookableSlots(cfg config, date businesstime.Date, earliest, latest time.Time) []rentals.Slot {
 	_, slots := cfg.calendar.Day(date)
+	if cfg.courier {
+		if cfg.area == nil {
+			return nil
+		}
+		slots = cfg.calendar.DeliveryWindows(date)
+	}
 	var out []rentals.Slot
 	for _, sl := range slots {
-		if at := businesstime.At(date, sl.Start, s.loc); !at.Before(earliest) && !at.After(latest) {
+		start := sl.Start
+		if cfg.courier {
+			start = sl.End
+		}
+		if at := businesstime.At(date, start, s.loc); !at.Before(earliest) && !at.After(latest) {
 			out = append(out, sl)
 		}
 	}
 	return out
+}
+
+// Fulfillment is what checkout may offer: the counter always, courier legs
+// with their zones once a delivery area is loaded (decision D43).
+type Fulfillment struct {
+	Courier bool
+	Zones   []delivery.Zone
+}
+
+// FulfillmentOptions reads the active delivery area. Only active zones are
+// listed.
+func (s *Service) FulfillmentOptions(ctx context.Context) (Fulfillment, error) {
+	cfg, err := s.config(ctx, s.pool)
+	if err != nil {
+		return Fulfillment{}, err
+	}
+	var out Fulfillment
+	if cfg.area == nil {
+		return out, nil
+	}
+	for _, z := range cfg.area.Zones {
+		if z.Active && len(z.Wards) > 0 {
+			out.Zones = append(out.Zones, z)
+		}
+	}
+	out.Courier = len(out.Zones) > 0
+	return out, nil
 }
 
 // ActivePolicy reads the rules in force for new bookings.

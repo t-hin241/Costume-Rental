@@ -28,6 +28,7 @@ const OpsSchedule = lazy(() => import('./features/ops/Schedule'));
 const OpsAlerts = lazy(() => import('./features/ops/Alerts'));
 const OpsAssets = lazy(() => import('./features/ops/Assets'));
 const OpsSupport = lazy(() => import('./features/ops/SupportDesk'));
+const OpsDeliveries = lazy(() => import('./features/ops/Deliveries'));
 const AdminDashboard = lazy(() => import('./features/admin/Dashboard'));
 const AdminCatalog = lazy(() => import('./features/admin/CatalogAdmin'));
 const AdminUsers = lazy(() => import('./features/admin/Users'));
@@ -109,6 +110,7 @@ export function App() {
                     <Route path="ops/alerts" element={<RequirePermission anyOf={['booking.read_all', 'inventory.read']}><OpsAlerts /></RequirePermission>} />
                     <Route path="ops/assets" element={<RequirePermission anyOf={['inventory.read']}><OpsAssets /></RequirePermission>} />
                     <Route path="ops/support" element={<RequirePermission anyOf={['support.handle']}><OpsSupport /></RequirePermission>} />
+                    <Route path="ops/deliveries" element={<RequirePermission anyOf={['delivery.read_all']}><OpsDeliveries /></RequirePermission>} />
                     <Route path="admin" element={<RequirePermission anyOf={['revenue.read', 'policy.manage']}><AdminDashboard /></RequirePermission>} />
                     <Route path="admin/revenue" element={<RequirePermission anyOf={['revenue.read', 'tax.manage']}><AdminRevenue /></RequirePermission>} />
                     <Route path="admin/reconciliation" element={<RequirePermission anyOf={['revenue.read']}><AdminReconciliation /></RequirePermission>} />

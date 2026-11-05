@@ -93,6 +93,7 @@ func routes(s *shop, x sweepTarget) map[string]access {
 	pack := `{"code":"X","label":"X","duration_hours":24,"status":"ACTIVE"}`
 	promotion := `{"code":"X","name":"X","type":"COUPON","status":"ACTIVE","value_type":"PERCENT","percent":10,"amount":null,"valid_from":"2026-11-01","valid_until":"2026-11-30","combinable":false,"usage_limit":1}`
 	user := "/api/v1/admin/users/" + x.stranger
+	task := "/api/v1/delivery/tasks/no-such-task"
 	reason := `{"reason":"thử"}`
 	return map[string]access{
 		"GET /api/v1/auth/me":                            {allow: everyPerson},
@@ -135,12 +136,22 @@ func routes(s *shop, x sweepTarget) map[string]access {
 		"POST /api/v1/bookings/{id}/payment-sessions": {allow: everyPerson, path: id + "/payment-sessions", body: `{"purpose":"RESERVATION","channel":"BANK_QR","idempotency_key":"s"}`},
 		"GET /api/v1/payment-sessions/{id}":           {allow: everyPerson, path: "/api/v1/payment-sessions/x"},
 
-		"GET /api/v1/ops/overview":                  {allow: office},
-		"GET /api/v1/ops/schedule":                  {allow: office, path: "/api/v1/ops/schedule?from=2026-11-01&to=2026-11-07"},
-		"GET /api/v1/ops/alerts":                    {allow: []string{desk, stock, finance, admin}},
-		"GET /api/v1/inventory/assets":              {allow: shelves},
-		"POST /api/v1/inventory/assets":             {allow: catalogs, denyOnly: true, body: `{"code":"X","variant_id":"x"}`},
-		"GET /api/v1/inventory/assets/{id}/history": {allow: shelves, path: "/api/v1/inventory/assets/" + x.asset + "/history"},
+		"GET /api/v1/bookings/{id}/deliveries":                    {allow: buyers, path: id + "/deliveries"},
+		"GET /api/v1/delivery/tasks":                              {allow: front},
+		"POST /api/v1/delivery/tasks/{id}/shipment":               {allow: front, path: task + "/shipment", body: `{"shipment_code":"X"}`},
+		"POST /api/v1/delivery/tasks/{id}/ready":                  {allow: front, path: task + "/ready"},
+		"POST /api/v1/delivery/tasks/{id}/events":                 {allow: front, path: task + "/events", body: `{"status":"IN_TRANSIT","reason":"x"}`},
+		"POST /api/v1/delivery/tasks/{id}/classify":               {allow: front, path: task + "/classify", body: `{"attempt_id":"a","fault":"CUSTOMER","reason":"x"}`},
+		"POST /api/v1/delivery/tasks/{id}/cancellation-confirmed": {allow: front, path: task + "/cancellation-confirmed"},
+		"POST /api/v1/delivery/tasks/{id}/received":               {allow: front, path: task + "/received"},
+		"POST /api/v1/delivery/tasks/{id}/close":                  {allow: front, path: task + "/close", body: `{"follow_up":"AT_STORE","reason":"x"}`},
+		"POST /api/v1/delivery/tasks/{id}/collected":              {allow: front, path: task + "/collected"},
+		"GET /api/v1/ops/overview":                                {allow: office},
+		"GET /api/v1/ops/schedule":                                {allow: office, path: "/api/v1/ops/schedule?from=2026-11-01&to=2026-11-07"},
+		"GET /api/v1/ops/alerts":                                  {allow: []string{desk, stock, finance, admin}},
+		"GET /api/v1/inventory/assets":                            {allow: shelves},
+		"POST /api/v1/inventory/assets":                           {allow: catalogs, denyOnly: true, body: `{"code":"X","variant_id":"x"}`},
+		"GET /api/v1/inventory/assets/{id}/history":               {allow: shelves, path: "/api/v1/inventory/assets/" + x.asset + "/history"},
 		"POST /api/v1/inventory/assets/{id}/status": {allow: catalogs, denyOnly: true, path: "/api/v1/inventory/assets/" + x.asset + "/status",
 			body: `{"action":"asset.retire","reason":"x","checklist_completed":false}`},
 		"GET /api/v1/support-requests":               {allow: office},

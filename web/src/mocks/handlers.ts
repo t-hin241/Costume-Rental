@@ -856,6 +856,12 @@ export const handlers: HttpHandler[] = [
     db.support.unshift(created);
     return json(created, 201);
   }),
+  // Delivery runs in manual mode on the real server; the mock keeps no shipments.
+  get('/bookings/:id/deliveries', () => json({ items: [] })),
+  get('/delivery/tasks', ({ request }) => {
+    requirePerm('delivery.read_all');
+    return json(paged([], new URL(request.url)));
+  }),
   get('/support-requests', () => {
     requirePerm('support.handle');
     return json(db.support);

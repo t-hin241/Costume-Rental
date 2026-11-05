@@ -9,6 +9,7 @@ import (
 
 	"webee_rentor/internal/catalog"
 	"webee_rentor/internal/catalog/catalogpg"
+	"webee_rentor/internal/delivery"
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory"
@@ -582,6 +583,10 @@ func (s *Server) proposeFee(w http.ResponseWriter, r *http.Request, p identity.P
 		Basis              string            `json:"basis"`
 		Evidence           []string          `json:"evidence"`
 		ConfirmedNewDamage bool              `json:"confirmed_new_damage"`
+		// TaskID and AttemptID name the failed attempt of a REDELIVERY fee,
+		// whose amount comes from the booking's zone.
+		TaskID    delivery.TaskID `json:"task_id"`
+		AttemptID string          `json:"attempt_id"`
 	}
 	id, err := bookingID(r)
 	if err != nil {
@@ -593,13 +598,16 @@ func (s *Server) proposeFee(w http.ResponseWriter, r *http.Request, p identity.P
 		writeError(w, r, err)
 		return
 	}
-	amount, err := in.Amount.value("amount")
-	if err != nil {
-		writeError(w, r, err)
-		return
+	var amount money.Money
+	if in.Kind != rentals.FeeRedelivery {
+		if amount, err = in.Amount.value("amount"); err != nil {
+			writeError(w, r, err)
+			return
+		}
 	}
 	a, err := s.svc.Rentals.ProposeFee(r.Context(), p, id, rentalsapp.FeeInput{
 		Asset: in.AssetID, Kind: in.Kind, Amount: amount, Basis: in.Basis, Evidence: in.Evidence, ConfirmedNewDamage: in.ConfirmedNewDamage,
+		Task: in.TaskID, Attempt: in.AttemptID,
 	})
 	if err != nil {
 		writeError(w, r, err)

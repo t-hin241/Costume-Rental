@@ -9,6 +9,7 @@ import { formatDateTime, formatMoney } from '../../lib/format';
 import {
   assessmentStatus, assetStatus, bookingActionLabel, bookingItemState, bookingStatus, bucket, condition, feeKind, paymentMethod, paymentState,
 } from '../../lib/labels';
+import { DeliveryPanel } from '../bookings/delivery';
 import { BookingLines, BookingStepper, ChargeList, FinanceSummary, HoldCountdown, PaymentRows, RefundRow, TransitionList, scheduleFacts } from '../bookings/parts';
 
 type Dialog =
@@ -121,6 +122,7 @@ function Desk({ booking }: { booking: BookingDetail }) {
                 </div>
               ))}
             </Card>
+            {(booking.outbound === 'COURIER' || booking.return === 'COURIER') && <DeliveryPanel bookingId={booking.id} />}
             <Card title="Trang phục đã đặt"><BookingLines booking={booking} /></Card>
             {booking.fees.length > 0 && (
               <Card title="Phí phát sinh">

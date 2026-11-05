@@ -10,6 +10,7 @@ import (
 	"webee_rentor/internal/businesstime"
 	"webee_rentor/internal/catalog"
 	"webee_rentor/internal/catalog/catalogpg"
+	"webee_rentor/internal/delivery"
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory"
@@ -49,11 +50,45 @@ type PlaceInput struct {
 	Lines      []LineInput
 	// CouponCode is what the customer typed; the campaign comes from storage.
 	CouponCode string
+	// Address is required when a leg is by courier.
+	Address *AddressInput
 }
 
-// errCourierNotWired: courier legs need the delivery zone resolution from
-// the customer address, which this step does not persist yet.
-var errCourierNotWired = fmt.Errorf("courier legs need the delivery module: %w", rentals.ErrDeliveryNotOffered)
+// AddressInput is the courier address the customer typed. The ward must be
+// served by the active delivery area; its zone gives the province and fees.
+type AddressInput struct {
+	RecipientName string
+	Phone         string
+	Line          string
+	WardCode      string
+}
+
+// placement is a priced and checked request, with the courier address and
+// the delivery area it was resolved against when a leg is by courier.
+type placement struct {
+	req     rentals.PlaceRequest
+	address *delivery.Address
+	area    *delivery.ServiceArea
+}
+
+// courierAddress resolves the customer's address against the active area.
+// Without an area courier legs are not offered (decision D43); outside it they
+// are refused, with no manual exception (decision D42).
+func courierAddress(area *delivery.ServiceArea, in *AddressInput) (delivery.Zone, delivery.Address, error) {
+	if area == nil {
+		return delivery.Zone{}, delivery.Address{}, rentals.ErrDeliveryNotOffered
+	}
+	if in == nil {
+		return delivery.Zone{}, delivery.Address{}, domainerr.Invalid("address", "required for delivery or courier pickup")
+	}
+	zone, ok := area.ZoneOfWard(in.WardCode)
+	if !ok {
+		return delivery.Zone{}, delivery.Address{}, delivery.ErrOutOfServiceArea
+	}
+	a := delivery.Address{RecipientName: in.RecipientName, Phone: in.Phone, Line: in.Line, WardCode: in.WardCode, ProvinceCode: zone.ProvinceCode}
+	z, err := area.Resolve(a)
+	return z, a, err
+}
 
 // PlaceBooking creates a booking with its snapshot and allocates every
 // component in one transaction. If any component is short nothing is
@@ -81,10 +116,11 @@ func (s *Service) PlaceBooking(ctx context.Context, p identity.Principal, in Pla
 			}
 		}
 		now := s.now().UTC()
-		req, err := s.placeRequest(ctx, tx, p, in, true)
+		checked, err := s.placeRequest(ctx, tx, p, in, true)
 		if err != nil {
 			return err
 		}
+		req := checked.req
 		req.Now = now
 		if req.UnpaidHolds, err = rentalspg.UnpaidHolds(ctx, tx, p.UserID, now); err != nil {
 			return err
@@ -104,6 +140,9 @@ func (s *Service) PlaceBooking(ctx context.Context, p identity.Principal, in Pla
 			return err
 		}
 		if err := s.openLedger(ctx, tx, pl.Booking, p.Actor(), now); err != nil {
+			return err
+		}
+		if err := s.createDeliveryTasks(ctx, tx, checked, pl.Booking, now); err != nil {
 			return err
 		}
 		used, err := promotions.Redeem(func(promotions.CampaignID) promotions.RedemptionID { return promotions.RedemptionID(s.newID()) },
@@ -128,30 +167,37 @@ func (s *Service) PlaceBooking(ctx context.Context, p identity.Principal, in Pla
 
 // placeRequest prices the lines from the current catalog, resolves the
 // schedule and reads inventory, locking it when lock is set.
-func (s *Service) placeRequest(ctx context.Context, q postgres.Querier, p identity.Principal, in PlaceInput, lock bool) (rentals.PlaceRequest, error) {
-	if in.Outbound == rentals.LegCourier || in.Return == rentals.LegCourier {
-		return rentals.PlaceRequest{}, errCourierNotWired
-	}
+func (s *Service) placeRequest(ctx context.Context, q postgres.Querier, p identity.Principal, in PlaceInput, lock bool) (placement, error) {
 	cfg, err := s.config(ctx, q)
 	if err != nil {
-		return rentals.PlaceRequest{}, err
+		return placement{}, err
+	}
+	fulfillment := rentals.FulfillmentRequest{Outbound: in.Outbound, Return: in.Return}
+	var out placement
+	if in.Outbound == rentals.LegCourier || in.Return == rentals.LegCourier {
+		zone, address, err := courierAddress(cfg.area, in.Address)
+		if err != nil {
+			return placement{}, err
+		}
+		fulfillment.Zone, fulfillment.AreaVersion = &zone, cfg.area.Version
+		out.address, out.area = &address, cfg.area
 	}
 	pkg, err := catalogpg.Package(ctx, q, in.PackageID)
 	if err != nil {
-		return rentals.PlaceRequest{}, err
+		return placement{}, err
 	}
 	lines, err := quoteLines(ctx, q, pkg, in.Lines)
 	if err != nil {
-		return rentals.PlaceRequest{}, err
+		return placement{}, err
 	}
 	schedule, err := cfg.calendar.ResolveFulfillment(in.PickupDate, in.Outbound, in.SlotID, pkg.Duration, in.Return)
 	if err != nil {
-		return rentals.PlaceRequest{}, err
+		return placement{}, err
 	}
 	// Campaigns are locked before assets, the same order everywhere.
 	pricing, err := s.price(ctx, q, p.UserID, in.CouponCode, lines, lock)
 	if err != nil {
-		return rentals.PlaceRequest{}, err
+		return placement{}, err
 	}
 	var variants []catalog.VariantID
 	for _, l := range lines {
@@ -166,14 +212,14 @@ func (s *Service) placeRequest(ctx context.Context, q postgres.Querier, p identi
 		view, err = readInventory(ctx, q, variants, cfg.allocation)
 	}
 	if err != nil {
-		return rentals.PlaceRequest{}, err
+		return placement{}, err
 	}
-	return rentals.PlaceRequest{
+	out.req = rentals.PlaceRequest{
 		BookingID: rentals.BookingID(s.newID()), Code: ids.Code("BK", 8), CustomerID: p.UserID, Actor: p.Actor(),
-		Schedule: schedule, Calendar: cfg.calendar, Lines: lines,
-		Fulfillment: rentals.FulfillmentRequest{Outbound: in.Outbound, Return: in.Return},
-		Pricing:     pricing, Policy: cfg.policy, Inventory: view,
-	}, nil
+		Schedule: schedule, Calendar: cfg.calendar, Lines: lines, Fulfillment: fulfillment,
+		Pricing: pricing, Policy: cfg.policy, Inventory: view,
+	}
+	return out, nil
 }
 
 // price applies the store's campaigns and the coupon to the lines. No campaign
@@ -286,10 +332,11 @@ func (s *Service) CheckAvailability(ctx context.Context, in PlaceInput) (Availab
 	in.CouponCode = "" // stock does not depend on a discount
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		guest := identity.Principal{UserID: "availability-check"}
-		req, err := s.placeRequest(ctx, tx, guest, in, false)
+		checked, err := s.placeRequest(ctx, tx, guest, in, false)
 		if err != nil {
 			return err
 		}
+		req := checked.req
 		req.Actor, req.Now = jobActor, s.now().UTC()
 		out.Schedule = req.Schedule
 		_, err = rentals.PlaceBooking(req)
@@ -323,10 +370,11 @@ func (s *Service) Quote(ctx context.Context, in PlaceInput) (QuoteResult, error)
 	var out QuoteResult
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		guest := identity.Principal{UserID: "quote"}
-		req, err := s.placeRequest(ctx, tx, guest, in, false)
+		checked, err := s.placeRequest(ctx, tx, guest, in, false)
 		if err != nil {
 			return err
 		}
+		req := checked.req
 		req.Actor, req.Now = jobActor, s.now().UTC()
 		if out.Booking, err = rentals.Quote(req); err != nil {
 			return err

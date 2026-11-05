@@ -52,6 +52,9 @@ func (s *Service) Cancel(ctx context.Context, p identity.Principal, id rentals.B
 		if err != nil {
 			return nil, err
 		}
+		if err := s.cancelDeliveryTasks(ctx, tx, b, "", p.Actor(), "booking cancelled", now); err != nil {
+			return nil, err
+		}
 		return append(ts, t), s.settleCancellation(ctx, tx, b, p.Actor(), now)
 	})
 }
@@ -84,6 +87,9 @@ func (s *Service) ExpireHolds(ctx context.Context, limit int) (int, error) {
 			}
 			ts, err := endOpenModification(ctx, tx, b, jobActor, "booking hold expired", now)
 			if err != nil {
+				return err
+			}
+			if err := s.cancelDeliveryTasks(ctx, tx, b, "", jobActor, "booking hold expired", now); err != nil {
 				return err
 			}
 			if err := s.settleCancellation(ctx, tx, b, jobActor, now); err != nil {
@@ -167,9 +173,14 @@ type HandoverInput struct {
 // RecordHandover hands the allocated assets to the customer: the booking
 // becomes RENTED, each asset READY → RENTED and each allocation is marked
 // handed over, all or nothing. An asset that is not READY (still cleaning,
-// say) stops the handover.
+// say) stops the handover. For a courier delivery the customer is the courier:
+// the outbound shipment must be booked, and it is recorded as picked up.
 func (s *Service) RecordHandover(ctx context.Context, p identity.Principal, id rentals.BookingID, in HandoverInput) (*rentals.Booking, error) {
 	return s.mutate(ctx, p, id, rentals.ActionHandover, func(tx pgx.Tx, b *rentals.Booking, _ identity.Scope, now time.Time) ([]rentals.Transition, error) {
+		// Delivery tasks are locked before assets.
+		if err := s.dispatchOutbound(ctx, tx, p, b, now); err != nil {
+			return nil, err
+		}
 		allocs, err := inventorypg.AllocationsOfBooking(ctx, tx, string(b.ID), true)
 		if err != nil {
 			return nil, err

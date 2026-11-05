@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"webee_rentor/internal/delivery"
+	"webee_rentor/internal/delivery/deliverypg"
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory"
@@ -83,6 +85,9 @@ type FeeInput struct {
 	Basis              string
 	Evidence           []string
 	ConfirmedNewDamage bool
+	// Task and Attempt name the failed delivery attempt of a REDELIVERY fee.
+	Task    delivery.TaskID
+	Attempt string
 }
 
 // ProposeFee records a fee awaiting a decision. Nothing is charged until it
@@ -94,10 +99,22 @@ func (s *Service) ProposeFee(ctx context.Context, p identity.Principal, id renta
 		if err != nil {
 			return nil, err
 		}
-		a, err := b.ProposeFee(existing, rentals.ProposeFeeRequest{
+		req := rentals.ProposeFeeRequest{
 			ID: rentals.AssessmentID(s.newID()), Asset: in.Asset, Kind: in.Kind, Amount: in.Amount, Basis: in.Basis,
 			Evidence: in.Evidence, ConfirmedNewDamage: in.ConfirmedNewDamage,
-		}, p, now)
+		}
+		if in.Kind == rentals.FeeRedelivery {
+			t, _, err := deliverypg.LoadTask(ctx, tx, in.Task, false)
+			if err != nil {
+				return nil, err
+			}
+			attempt, ok := t.Attempt(in.Attempt)
+			if !ok || t.BookingRef != string(b.ID) {
+				return nil, domainerr.Invalid("attempt", "not a failed attempt of this booking")
+			}
+			req.Attempt = &attempt
+		}
+		a, err := b.ProposeFee(existing, req, p, now)
 		if err != nil {
 			return nil, err
 		}

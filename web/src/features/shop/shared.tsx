@@ -6,7 +6,7 @@ import { LogoMark } from '../../components/Logo';
 import { Notice, Skeleton } from '../../components/ui';
 import { assetURL } from '../../lib/api/client';
 import { catalogApi, storeApi } from '../../lib/api/endpoints';
-import type { Availability, CalendarDay, Image, Money, OfferingCard, Quote, RentalPackage, ReservationTreatment } from '../../lib/api/types';
+import type { Availability, CalendarDay, Image, LegMode, Money, OfferingCard, Quote, RentalPackage, ReservationTreatment } from '../../lib/api/types';
 import type { BagSchedule } from '../../lib/bag';
 import { addBusinessDays, businessToday, formatDateTime, formatMoney } from '../../lib/format';
 
@@ -49,12 +49,15 @@ function lastOfMonth(month: string): string {
   return addBusinessDays(shiftMonth(month, 1), -1);
 }
 
-/** Month view of the store calendar: which days are open comes from the API. */
-export function StoreCalendarPicker({ value, onChange }: { value?: string; onChange: (date: string) => void }) {
+/**
+ * Month view of the store calendar: which days are open comes from the API.
+ * With a courier outbound the days and slots are the delivery windows.
+ */
+export function StoreCalendarPicker({ value, onChange, outbound = 'STORE' }: { value?: string; onChange: (date: string) => void; outbound?: LegMode }) {
   const [month, setMonth] = useState(() => firstOfMonth(value ?? businessToday()));
   const calendar = useQuery({
-    queryKey: ['store-calendar', month],
-    queryFn: () => storeApi.calendar(month, lastOfMonth(month)),
+    queryKey: ['store-calendar', month, outbound],
+    queryFn: () => storeApi.calendar(month, lastOfMonth(month), outbound),
     staleTime: 60_000,
   });
 
@@ -106,13 +109,13 @@ export function StoreCalendarPicker({ value, onChange }: { value?: string; onCha
 }
 
 /** Picks the rental package, pickup date and slot; the bag shares this choice. */
-export function SchedulePicker({ packages, prices, value, onChange }: {
-  packages: RentalPackage[]; prices?: Map<string, Money>; value: Partial<BagSchedule>; onChange: (v: Partial<BagSchedule>) => void;
+export function SchedulePicker({ packages, prices, value, onChange, outbound = 'STORE' }: {
+  packages: RentalPackage[]; prices?: Map<string, Money>; value: Partial<BagSchedule>; onChange: (v: Partial<BagSchedule>) => void; outbound?: LegMode;
 }) {
   const month = value.pickup_date ? firstOfMonth(value.pickup_date) : null;
   const calendar = useQuery({
-    queryKey: ['store-calendar', month],
-    queryFn: () => storeApi.calendar(month as string, lastOfMonth(month as string)),
+    queryKey: ['store-calendar', month, outbound],
+    queryFn: () => storeApi.calendar(month as string, lastOfMonth(month as string), outbound),
     enabled: month !== null,
     staleTime: 60_000,
   });
@@ -136,11 +139,11 @@ export function SchedulePicker({ packages, prices, value, onChange }: {
       </div>
       <div>
         <p className="filter-title">Ngày nhận hàng</p>
-        <StoreCalendarPicker value={value.pickup_date} onChange={(pickup_date) => onChange({ pickup_date, slot_id: undefined })} />
+        <StoreCalendarPicker value={value.pickup_date} outbound={outbound} onChange={(pickup_date) => onChange({ pickup_date, slot_id: undefined })} />
       </div>
       {value.pickup_date && (
         <div>
-          <p className="filter-title" id="slot-label">Khung giờ nhận</p>
+          <p className="filter-title" id="slot-label">{outbound === 'COURIER' ? 'Khung giờ giao đến' : 'Khung giờ nhận'}</p>
           <div className="chip-group" role="radiogroup" aria-labelledby="slot-label">
             {slots.map((s) => (
               <button key={s.id} type="button" role="radio" className="chip" aria-checked={value.slot_id === s.id} onClick={() => onChange({ slot_id: s.id })}>{s.label}</button>

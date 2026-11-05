@@ -49,6 +49,9 @@ const (
 	StatusLost            Status = "LOST"
 	StatusDamaged         Status = "DAMAGED"
 	StatusManualReview    Status = "MANUAL_REVIEW"
+	// StatusClosedUnfulfilled: the carrier stopped attempting and staff
+	// closed the shipment with a follow-up (decision D42).
+	StatusClosedUnfulfilled Status = "CLOSED_UNFULFILLED"
 )
 
 var progress = map[Direction][]Status{
@@ -59,7 +62,7 @@ var progress = map[Direction][]Status{
 func rank(d Direction, s Status) int { return slices.Index(progress[d], s) }
 
 func terminal(s Status) bool {
-	return s == StatusDelivered || s == StatusReceivedAtStore || s == StatusCancelled || s == StatusLost
+	return s == StatusDelivered || s == StatusReceivedAtStore || s == StatusCancelled || s == StatusLost || s == StatusClosedUnfulfilled
 }
 
 // Fault says who caused a failed attempt (customer absent or wrong address,
@@ -92,7 +95,10 @@ type Parcel struct {
 
 // Attempt is one failed delivery or pickup attempt.
 type Attempt struct {
-	ID       string
+	ID string
+	// TaskID is the shipment the attempt belongs to; a customer pays at most
+	// one redelivery fee per shipment (decision D42).
+	TaskID   TaskID
 	Status   Status // DELIVERY_FAILED or PICKUP_FAILED
 	At       time.Time
 	Fault    Fault
@@ -159,8 +165,23 @@ type Task struct {
 	FailureReason       string
 	Attempts            []Attempt
 	Events              []Event
-	statusBeforeCancel  Status
-	CreatedAt           time.Time
+	// GaveUpAt and GaveUpAttempt are set when the carrier stopped attempting
+	// (attempts exhausted, parcel sent back, pickup cancelled); the task then
+	// waits in MANUAL_REVIEW for staff (decision D42).
+	GaveUpAt      *time.Time
+	GaveUpAttempt string
+	// FollowUp is what staff chose when closing the task; ClosedBy and
+	// ClosedReason are kept for audit.
+	FollowUp     FollowUp
+	ClosedBy     *identity.Actor
+	ClosedReason string
+	// Replaces / ReplacedBy link a new shipment for the same leg to the
+	// closed one.
+	Replaces   TaskID
+	ReplacedBy TaskID
+	// StatusBeforeCancel is restored when the carrier refuses a cancellation.
+	StatusBeforeCancel Status
+	CreatedAt          time.Time
 }
 
 // NewTaskRequest creates a task. For OUTBOUND, From is the store and To the
@@ -334,7 +355,7 @@ func (t *Task) RequestCancel(actor identity.Actor, reason string) error {
 	if terminal(t.Status) || t.Status == StatusCancelRequested || rank(t.Direction, t.Progress) >= rank(t.Direction, t.pickedUpStatus()) {
 		return fmt.Errorf("task %s from %s: %w", t.ID, t.Status, ErrInvalidTransition)
 	}
-	t.statusBeforeCancel = t.Status
+	t.StatusBeforeCancel = t.Status
 	t.Status = StatusCancelRequested
 	t.FailureReason = reason
 	return nil
@@ -355,7 +376,7 @@ func (t *Task) CancelRejected(reason string) error {
 	if err := t.require(StatusCancelRequested); err != nil {
 		return err
 	}
-	t.Status, t.FailureReason = t.statusBeforeCancel, reason
+	t.Status, t.FailureReason = t.StatusBeforeCancel, reason
 	return nil
 }
 
@@ -393,6 +414,10 @@ func (t *Task) ClassifyAttempt(actor identity.Actor, attemptID string, fault Fau
 	}
 	if fault != FaultCustomer && fault != FaultStore && fault != FaultCarrier {
 		return domainerr.Invalid("fault", "unknown fault")
+	}
+	// The follow-up and its money were decided on this classification.
+	if t.Status == StatusClosedUnfulfilled {
+		return fmt.Errorf("task %s from %s: %w", t.ID, t.Status, ErrInvalidTransition)
 	}
 	i := slices.IndexFunc(t.Attempts, func(a Attempt) bool { return a.ID == attemptID })
 	if i < 0 {

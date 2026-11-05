@@ -10,6 +10,7 @@ import (
 	"webee_rentor/internal/businesstime"
 	"webee_rentor/internal/catalog"
 	"webee_rentor/internal/catalog/catalogapp"
+	"webee_rentor/internal/delivery"
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory"
@@ -226,7 +227,12 @@ func (s *Server) storeCalendar(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	c, err := s.svc.Rentals.Calendar(r.Context(), from, to)
+	outbound := rentals.LegMode(r.URL.Query().Get("outbound"))
+	if outbound != "" && outbound != rentals.LegStore && outbound != rentals.LegCourier {
+		writeError(w, r, domainerr.Invalid("outbound", "must be STORE or COURIER"))
+		return
+	}
+	c, err := s.svc.Rentals.Calendar(r.Context(), from, to, outbound)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -251,10 +257,35 @@ func (s *Server) storeCalendar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// fulfillmentOptions offers the store counter only: courier legs need the
-// delivery module, which PlaceBooking refuses until it is connected.
-func (s *Server) fulfillmentOptions(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"outbound": []string{"STORE"}, "return": []string{"STORE"}, "zones": []any{}})
+// fulfillmentOptions offers the counter, and courier legs with the wards
+// served once a delivery area is loaded (decision D43).
+func (s *Server) fulfillmentOptions(w http.ResponseWriter, r *http.Request) {
+	type wardDTO struct {
+		Code string `json:"code"`
+		Name string `json:"name"`
+	}
+	type zoneDTO struct {
+		ID            string    `json:"id"`
+		Name          string    `json:"name"`
+		Wards         []wardDTO `json:"wards"`
+		OutboundFee   moneyDTO  `json:"outbound_fee"`
+		ReturnFee     moneyDTO  `json:"return_fee"`
+		RedeliveryFee moneyDTO  `json:"redelivery_fee"`
+	}
+	opts, err := s.svc.Rentals.FulfillmentOptions(r.Context())
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	modes := []rentals.LegMode{rentals.LegStore}
+	if opts.Courier {
+		modes = append(modes, rentals.LegCourier)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"outbound": modes, "return": modes,
+		"zones": mapped(opts.Zones, func(z delivery.Zone) zoneDTO {
+			return zoneDTO{ID: z.ID, Name: z.Name, OutboundFee: moneyOf(z.OutboundFee), ReturnFee: moneyOf(z.ReturnFee), RedeliveryFee: moneyOf(z.RedeliveryFee),
+				Wards: mapped(z.Wards, func(w delivery.Ward) wardDTO { return wardDTO{Code: w.Code, Name: w.Name} })}
+		})})
 }
 
 type tierDTO struct {
@@ -356,7 +387,7 @@ type bookingInput struct {
 	Outbound   rentals.LegMode   `json:"outbound"`
 	Return     rentals.LegMode   `json:"return"`
 	Lines      []lineInput       `json:"lines"`
-	// Address is accepted for courier legs, which are refused for now.
+	// Address is required when a leg is by courier.
 	Address    *addressInput `json:"address"`
 	CouponCode string        `json:"coupon_code"`
 	RequestKey string        `json:"request_key"`
@@ -382,6 +413,15 @@ func (b bookingInput) place() (rentalsapp.PlaceInput, error) {
 			}
 			return rentalsapp.LineInput{Kind: l.Kind, OfferingID: l.OfferingID, VariantID: l.VariantID, Selections: picks, Quantity: l.Quantity}
 		}),
+	}
+	if b.Address != nil {
+		a := b.Address
+		for _, f := range []string{a.RecipientName, a.Phone, a.Line, a.WardCode} {
+			if len(f) > maxNote {
+				return rentalsapp.PlaceInput{}, domainerr.Invalid("address", "a field is too long")
+			}
+		}
+		in.Address = &rentalsapp.AddressInput{RecipientName: a.RecipientName, Phone: a.Phone, Line: a.Line, WardCode: a.WardCode}
 	}
 	if in.Outbound == "" {
 		in.Outbound = rentals.LegStore

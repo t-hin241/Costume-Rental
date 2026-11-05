@@ -28,6 +28,10 @@ type CarrierEvent struct {
 	// Fault, when the carrier says who caused a failed attempt; otherwise
 	// staff classify it.
 	Fault Fault
+	// GaveUp, on a failed attempt: the carrier will not try this shipment
+	// again (attempts exhausted, parcel sent back to the store, pickup
+	// cancelled). Staff then choose a follow-up (decision D42).
+	GaveUp bool
 }
 
 // Outcome reports what an event did.
@@ -60,6 +64,9 @@ func (t *Task) ApplyCarrierEvent(e CarrierEvent) (Outcome, error) {
 	}
 	if !slices.Contains(carrierStatuses[t.Direction], e.Status) {
 		return "", domainerr.Invalid("status", fmt.Sprintf("%s is not a carrier status for %s", e.Status, t.Direction))
+	}
+	if e.GaveUp && !failedAttempt(e.Status) {
+		return "", domainerr.Invalid("gave_up", "only a failed attempt can end the carrier's attempts")
 	}
 	if slices.ContainsFunc(t.Events, func(x Event) bool { return x.Key == e.Key }) {
 		return OutcomeDuplicate, nil
@@ -94,6 +101,10 @@ func (t *Task) decide(e CarrierEvent) Outcome {
 		t.set(e.Status)
 		return OutcomeApplied
 	}
+	if t.Status == StatusClosedUnfulfilled {
+		// Staff already took over; later carrier events are history only.
+		return OutcomeStale
+	}
 	if terminal(t.Status) {
 		if e.Status == t.Status || (t.Status != StatusCancelled && rank(t.Direction, e.Status) >= 0) {
 			return OutcomeStale
@@ -116,8 +127,13 @@ func (t *Task) decide(e CarrierEvent) Outcome {
 		if fault == "" {
 			fault = FaultUnknown
 		}
-		t.Attempts = append(t.Attempts, Attempt{ID: e.Key, Status: e.Status, At: e.OccurredAt.UTC(), Fault: fault, Reason: e.Reason, Evidence: e.Evidence})
-		return OutcomeApplied
+		t.Attempts = append(t.Attempts, Attempt{ID: e.Key, TaskID: t.ID, Status: e.Status, At: e.OccurredAt.UTC(), Fault: fault, Reason: e.Reason, Evidence: e.Evidence})
+		if !e.GaveUp {
+			return OutcomeApplied
+		}
+		t.GaveUpAt, t.GaveUpAttempt = ptr(e.OccurredAt), e.Key
+		t.Status, t.FailureReason = StatusManualReview, "carrier stopped attempting: "+e.Reason
+		return OutcomeReview
 	case StatusLost, StatusDamaged:
 		t.Status, t.FailureReason = e.Status, e.Reason
 		return OutcomeApplied
@@ -125,8 +141,7 @@ func (t *Task) decide(e CarrierEvent) Outcome {
 	// Normal progress: only forward. After a failed attempt a re-attempt may
 	// report the same or a later stage again.
 	r, cur := rank(t.Direction, e.Status), rank(t.Direction, t.Progress)
-	failed := t.Status == StatusPickupFailed || t.Status == StatusDeliveryFailed || t.Status == StatusReturnFailed
-	if r < cur || (r == cur && !failed) {
+	if r < cur || (r == cur && !failedAttempt(t.Status)) {
 		return OutcomeStale
 	}
 	switch e.Status {
@@ -137,6 +152,10 @@ func (t *Task) decide(e CarrierEvent) Outcome {
 	}
 	t.set(e.Status)
 	return OutcomeApplied
+}
+
+func failedAttempt(s Status) bool {
+	return s == StatusPickupFailed || s == StatusDeliveryFailed || s == StatusReturnFailed
 }
 
 // ManualEvent lets authorised staff record a status the carrier did not
@@ -165,6 +184,44 @@ func (t *Task) ManualEvent(p identity.Principal, status Status, reason, evidence
 		t.Events[len(t.Events)-1].Actor = &actor
 	}
 	return out, err
+}
+
+// ManualAttempt records a failed attempt staff saw in the carrier's app
+// (manual mode, decision D43): who caused it when known, and whether the
+// carrier stopped attempting. Fault UNKNOWN leaves the classification for
+// later.
+func (t *Task) ManualAttempt(p identity.Principal, status Status, fault Fault, gaveUp bool, reason, evidence string, at time.Time) (Outcome, error) {
+	if err := p.Require(identity.PermDeliveryManage); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(reason) == "" {
+		return "", ErrReasonRequired
+	}
+	if !failedAttempt(status) {
+		return "", domainerr.Invalid("status", "not a failed attempt")
+	}
+	switch fault {
+	case "", FaultUnknown:
+		fault = FaultUnknown
+	case FaultCustomer, FaultStore, FaultCarrier:
+	default:
+		return "", domainerr.Invalid("fault", "unknown fault")
+	}
+	if t.ProviderShipmentCode == "" || t.AwaitingFollowUp() {
+		return "", fmt.Errorf("task %s from %s: %w", t.ID, t.Status, ErrInvalidTransition)
+	}
+	actor := p.Actor()
+	e := CarrierEvent{Provider: t.ProviderCode, ShipmentCode: t.ProviderShipmentCode, Key: fmt.Sprintf("manual:%s:%d", status, at.UnixNano()),
+		Status: status, OccurredAt: at, ReceivedAt: at, Source: SourceAdmin, Reason: reason, Evidence: evidence, Fault: fault, GaveUp: gaveUp}
+	out, err := t.ApplyCarrierEvent(e)
+	if err != nil {
+		return "", err
+	}
+	t.Events[len(t.Events)-1].Actor = &actor
+	if i := slices.IndexFunc(t.Attempts, func(a Attempt) bool { return a.ID == e.Key }); i >= 0 && fault != FaultUnknown {
+		t.Attempts[i].ClassifiedBy = &actor
+	}
+	return out, nil
 }
 
 // FeeReconciliation compares carrier cost with what the customer paid.

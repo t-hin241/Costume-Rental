@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -97,5 +98,56 @@ func TestParseRefusesWhatCouldNotBeUsed(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+const deliverySample = `
+version: area-2026-11
+provider: ghn
+windows:
+  - { id: morning, days: [tue, sat], start: "09:00", end: "12:00" }
+carrier: { fee_tolerance: 10000, return_shipment_lead: 24h, parcel_weight_gram: 1000 }
+origin: { name: Cửa hàng, phone: "0900000000", line: 1 Đường A, ward_code: "W0", province_code: "1000001" }
+zones:
+  - id: noi-thanh
+    name: Nội thành
+    province_code: "1000001"
+    wards:
+      - { code: "W1", name: Phường Bến Nghé }
+    outbound_fee: 30000
+    return_fee: 30000
+    redelivery_fee: 30000
+    active: true
+`
+
+// Decision D43: the delivery file opens courier legs once it is complete.
+func TestParseDelivery(t *testing.T) {
+	c, err := parseDelivery([]byte(deliverySample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	z, ok := c.Area.ZoneOfWard("W1")
+	if !ok || z.ProvinceCode != "1000001" || z.OutboundFee.Amount() != 30_000 || c.Area.FeeTolerance.Amount() != 10_000 ||
+		c.Area.ReturnShipmentLead != 24*time.Hour || len(c.Windows[time.Saturday]) != 1 || len(c.Windows[time.Monday]) != 0 {
+		t.Fatalf("parsed = %+v", c)
+	}
+	for name, body := range map[string]string{
+		"placeholder":  strings.Replace(deliverySample, `- { code: "W1", name: Phường Bến Nghé }`, "???", 1),
+		"no wards":     strings.Replace(deliverySample, `      - { code: "W1", name: Phường Bến Nghé }`, "      []", 1),
+		"unnamed ward": strings.Replace(deliverySample, "name: Phường Bến Nghé", `name: ""`, 1),
+		"unknown key":  deliverySample + "extra: 1\n",
+		"bad day":      strings.Replace(deliverySample, "[tue, sat]", "[tue, xyz]", 1),
+		"no origin":    strings.Replace(deliverySample, `ward_code: "W0", `, "", 1),
+		"no parcel":    strings.Replace(deliverySample, ", parcel_weight_gram: 1000", "", 1),
+	} {
+		if _, err := parseDelivery([]byte(body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// The real file still has ??? placeholders: it must be refused.
+	if raw, err := os.ReadFile("../../config/delivery.yaml"); err == nil {
+		if _, err := parseDelivery(raw); err == nil {
+			t.Error("config/delivery.yaml with placeholders was accepted")
+		}
 	}
 }

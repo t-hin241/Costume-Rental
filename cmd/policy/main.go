@@ -8,7 +8,11 @@
 // One-off closures are only ever added: removing a date from the file does
 // not reopen the store on that date.
 //
-//	DATABASE_URL=postgres://... go run ./cmd/policy -file config/policy.yaml
+// With -delivery it also loads the courier service area, fee table and
+// delivery windows (decision D43); courier legs are only offered once an area
+// is loaded.
+//
+//	DATABASE_URL=postgres://... go run ./cmd/policy -file config/policy.yaml [-delivery config/delivery.yaml]
 package main
 
 import (
@@ -307,7 +311,7 @@ func save(ctx context.Context, tx pgx.Tx, c config, now time.Time) (bool, error)
 	})
 }
 
-func run(path string) error {
+func run(path, deliveryPath string) error {
 	env := envconfig.New()
 	dsn := env.Required("DATABASE_URL")
 	if err := env.Err(); err != nil {
@@ -321,6 +325,18 @@ func run(path string) error {
 	if err != nil {
 		return err
 	}
+	var area *deliveryConfig
+	if deliveryPath != "" {
+		raw, err := os.ReadFile(deliveryPath)
+		if err != nil {
+			return err
+		}
+		d, err := parseDelivery(raw)
+		if err != nil {
+			return err
+		}
+		area = &d
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	pool, err := postgres.Open(ctx, postgres.Config{DSN: dsn, ConnectTimeout: 5 * time.Second, StatementTimeout: 10 * time.Second})
@@ -328,10 +344,14 @@ func run(path string) error {
 		return err
 	}
 	defer pool.Close()
-	var published bool
+	var published, areaPublished bool
 	err = postgres.InTx(ctx, pool, func(tx pgx.Tx) error {
+		now := time.Now().UTC()
 		var err error
-		published, err = save(ctx, tx, c, time.Now().UTC())
+		if published, err = save(ctx, tx, c, now); err != nil || area == nil {
+			return err
+		}
+		areaPublished, err = saveDelivery(ctx, tx, *area, now)
 		return err
 	})
 	if err != nil {
@@ -341,13 +361,17 @@ func run(path string) error {
 		return err
 	}
 	slog.Info("policy loaded", "version", c.Rental.Version, "published", published)
+	if area != nil {
+		slog.Info("delivery area loaded", "version", area.Area.Version, "published", areaPublished)
+	}
 	return nil
 }
 
 func main() {
 	path := flag.String("file", "config/policy.yaml", "policy configuration file")
+	deliveryPath := flag.String("delivery", "", "delivery configuration file (optional)")
 	flag.Parse()
-	if err := run(*path); err != nil {
+	if err := run(*path, *deliveryPath); err != nil {
 		slog.Error("policy load failed", "error", err)
 		os.Exit(1)
 	}

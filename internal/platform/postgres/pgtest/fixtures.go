@@ -13,6 +13,7 @@ import (
 	"webee_rentor/internal/businesstime"
 	"webee_rentor/internal/catalog"
 	"webee_rentor/internal/catalog/catalogpg"
+	"webee_rentor/internal/delivery"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/identity/identitypg"
 	"webee_rentor/internal/inventory"
@@ -70,8 +71,21 @@ func Policy() rentals.Policy {
 	}
 }
 
-// SeedConfig installs the fixture policies and store hours: Monday to
-// Saturday, slots 09:00–11:00 and 15:00–17:00, closed 2026-11-20.
+// DeliveryArea is the fixture courier area (fake codes and addresses): one
+// zone with wards W1 and W2, fees 30,000 each way and 20,000 per redelivery.
+func DeliveryArea() delivery.ServiceArea {
+	return delivery.ServiceArea{
+		ProviderCode: "ghn", Version: "fixture-area-v1", FeeTolerance: VND(10_000), ReturnShipmentLead: day, ParcelWeightGram: 1000,
+		Origin: delivery.Address{RecipientName: "Cửa hàng", Phone: "0900000000", Line: "1 Đường A", WardCode: "W0", ProvinceCode: "P1"},
+		Zones: []delivery.Zone{{ID: "inner", Name: "Nội thành", ProvinceCode: "P1",
+			Wards:       []delivery.Ward{{Code: "W1", Name: "Phường Một"}, {Code: "W2", Name: "Phường Hai"}},
+			OutboundFee: VND(30_000), ReturnFee: VND(30_000), RedeliveryFee: VND(20_000), Active: true}},
+	}
+}
+
+// SeedConfig installs the fixture policies, store hours and courier area:
+// Monday to Saturday, slots 09:00–11:00 and 15:00–17:00, courier windows
+// 07:00–09:00 and 13:00–15:00 (each ends at a slot start), closed 2026-11-20.
 func SeedConfig(ctx context.Context, p *pgxpool.Pool) error {
 	return postgres.InTx(ctx, p, func(tx pgx.Tx) error {
 		system := identity.SystemActor("pgtest")
@@ -94,6 +108,18 @@ func SeedConfig(ctx context.Context, p *pgxpool.Pool) error {
 			weekly[d] = slots
 		}
 		if err := rentalspg.ReplaceSlots(ctx, tx, rentalspg.SlotCounter, weekly); err != nil {
+			return err
+		}
+		early, _ := businesstime.ParseTimeOfDay("07:00")
+		noon, _ := businesstime.ParseTimeOfDay("13:00")
+		windows := map[time.Weekday][]rentals.Slot{}
+		for d := time.Monday; d <= time.Saturday; d++ {
+			windows[d] = []rentals.Slot{{ID: "deliver-am", Start: early, End: morning}, {ID: "deliver-pm", Start: noon, End: afternoon}}
+		}
+		if err := rentalspg.ReplaceSlots(ctx, tx, rentalspg.SlotDelivery, windows); err != nil {
+			return err
+		}
+		if err := postgres.SaveDocument(ctx, tx, postgres.DocDeliveryArea, DeliveryArea().Version, DeliveryArea(), system, Now, true); err != nil {
 			return err
 		}
 		closed, _ := businesstime.ParseDate("2026-11-20")

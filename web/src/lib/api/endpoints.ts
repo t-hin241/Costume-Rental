@@ -1,7 +1,8 @@
 import { api } from './client';
 import type {
   AdminBundle, AdminItem, AdminUser, Asset, AssetAction, AssetHistoryEntry, AssetStatus, AuditEvent, Availability, BookingDetail,
-  BookingInput, BookingStatus, BookingSummary, Bucket, Campaign, CancellationPreview, Category, Condition, Dashboard, FeeAssessment, FeeKind,
+  BookingInput, BookingStatus, BookingSummary, Bucket, Campaign, CancellationPreview, Category, Condition, Dashboard, DeliveryFault, DeliveryStatus,
+  DeliveryTask, FeeAssessment, FeeKind, FollowUp, LegMode,
   FulfillmentOptions, LoginResult, MFAEnrollment, Money, OfferingDetail, OfferingKind, OfferingPage, OpsAlerts, OpsOverview, Page,
   PaymentChannel, PaymentMethod, PaymentPurpose, PaymentSession, PermissionMatrix, PolicyDocument, Profile, ProfileReview, PublicPolicy, Quote, RentalPackage, Role, ScheduleEvent, Session, StoreCalendar,
   StoreInfo, SupportRequest, SupportTopic, User,
@@ -67,7 +68,7 @@ export const catalogApi = {
 
 export const storeApi = {
   info: () => api<StoreInfo>('/store/info'),
-  calendar: (from: string, to: string) => api<StoreCalendar>('/store/calendar', { query: { from, to } }),
+  calendar: (from: string, to: string, outbound: LegMode = 'STORE') => api<StoreCalendar>('/store/calendar', { query: { from, to, outbound } }),
   fulfillment: () => api<FulfillmentOptions>('/store/fulfillment-options'),
   policy: () => api<PublicPolicy>('/policies/public'),
 };
@@ -96,6 +97,7 @@ export interface InspectionInput {
 export interface FeeInput {
   asset_id: string;
   kind: FeeKind;
+  /** Ignored for REDELIVERY: the booking's zone fee applies. */
   amount: Money;
   basis: string;
   evidence: string[];
@@ -156,6 +158,40 @@ export const paymentApi = {
   createSession: (bookingId: string, body: { purpose: PaymentPurpose; channel: PaymentChannel; idempotency_key: string }) =>
     api<PaymentSession>(`${booking(bookingId)}/payment-sessions`, { method: 'POST', body }),
   session: (id: string) => api<PaymentSession>(`/payment-sessions/${encodeURIComponent(id)}`),
+};
+
+export interface DeliveryEventInput {
+  status: DeliveryStatus;
+  fault?: DeliveryFault;
+  gave_up?: boolean;
+  reason: string;
+  evidence?: string;
+  at?: string;
+}
+
+export interface CloseShipmentInput {
+  follow_up: FollowUp;
+  reason: string;
+  date?: string;
+  window_id?: string;
+}
+
+const task = (id: string) => `/delivery/tasks/${encodeURIComponent(id)}`;
+
+// Delivery in manual mode (decision D43): staff book each shipment in the
+// carrier's app and record here what happens to it.
+export const deliveryApi = {
+  ofBooking: (bookingId: string) => api<{ items: DeliveryTask[] }>(`${booking(bookingId)}/deliveries`),
+  board: (query: { open: boolean; page: number; page_size: number }) => api<Page<DeliveryTask>>('/delivery/tasks', { query: { ...query } }),
+  recordShipment: (id: string, shipment_code: string) => api<DeliveryTask>(`${task(id)}/shipment`, { method: 'POST', body: { shipment_code } }),
+  markReady: (id: string) => api<DeliveryTask>(`${task(id)}/ready`, { method: 'POST' }),
+  recordEvent: (id: string, body: DeliveryEventInput) => api<DeliveryTask>(`${task(id)}/events`, { method: 'POST', body }),
+  classify: (id: string, attempt_id: string, fault: DeliveryFault, reason: string) =>
+    api<DeliveryTask>(`${task(id)}/classify`, { method: 'POST', body: { attempt_id, fault, reason } }),
+  confirmCancelled: (id: string) => api<DeliveryTask>(`${task(id)}/cancellation-confirmed`, { method: 'POST' }),
+  receive: (id: string) => api<DeliveryTask>(`${task(id)}/received`, { method: 'POST' }),
+  close: (id: string, body: CloseShipmentInput) => api<DeliveryTask>(`${task(id)}/close`, { method: 'POST', body }),
+  collect: (id: string) => api<DeliveryTask>(`${task(id)}/collected`, { method: 'POST' }),
 };
 
 export const opsApi = {

@@ -2,6 +2,7 @@ package delivery_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -65,11 +66,16 @@ func event(key string, s delivery.Status, at time.Time) delivery.CarrierEvent {
 }
 
 func TestServiceArea(t *testing.T) {
-	area := delivery.ServiceArea{ProviderCode: "ghn", Version: "area-v1", Zones: []delivery.Zone{
+	area := delivery.ServiceArea{ProviderCode: "ghn", Version: "area-v1", Origin: store, ParcelWeightGram: 1000, Zones: []delivery.Zone{
 		{ID: "inner", ProvinceCode: "P1", DistrictCodes: []string{"D1", "D3"}, OutboundFee: vnd(30_000), ReturnFee: vnd(30_000), RedeliveryFee: vnd(20_000), Active: true},
 	}}
 	if err := area.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	noOrigin := area
+	noOrigin.Origin = delivery.Address{}
+	if err := noOrigin.Validate(); err == nil {
+		t.Fatal("an area without the store address was accepted")
 	}
 	z, err := area.Resolve(customer)
 	if err != nil || z.ID != "inner" {
@@ -79,6 +85,29 @@ func TestServiceArea(t *testing.T) {
 	far.DistrictCode = "D99"
 	if _, err := area.Resolve(far); !errors.Is(err, delivery.ErrOutOfServiceArea) {
 		t.Fatalf("out of area err = %v", err)
+	}
+	// Ward-based zones (GHN since 2025-07): no district needed.
+	wards := delivery.ServiceArea{ProviderCode: "ghn", Version: "area-v2", Origin: store, ParcelWeightGram: 1000, Zones: []delivery.Zone{
+		{ID: "inner", ProvinceCode: "P1", Wards: []delivery.Ward{{Code: "W2", Name: "Phường 2"}}, OutboundFee: vnd(30_000), ReturnFee: vnd(30_000), RedeliveryFee: vnd(20_000), Active: true},
+	}}
+	noDistrict := customer
+	noDistrict.DistrictCode = ""
+	if z, err := wards.Resolve(noDistrict); err != nil || z.ID != "inner" {
+		t.Fatalf("ward zone = %+v, %v", z, err)
+	}
+	if z, ok := wards.ZoneOfWard("W2"); !ok || z.ID != "inner" {
+		t.Fatalf("zone of ward = %+v, %v", z, ok)
+	}
+	if _, ok := wards.ZoneOfWard("W9"); ok {
+		t.Fatal("a ward outside the area has a zone")
+	}
+	otherWard := noDistrict
+	otherWard.WardCode = "W9"
+	if _, err := wards.Resolve(otherWard); !errors.Is(err, delivery.ErrOutOfServiceArea) {
+		t.Fatalf("ward outside the area err = %v", err)
+	}
+	if m := customer.ForStaffAfterContact(); m.Line != "" || m.Phone != "***111" || m.RecipientName != customer.RecipientName || m.WardCode != customer.WardCode {
+		t.Fatalf("address after the contact period = %+v", m)
 	}
 	bad := customer
 	bad.Phone = "abc"
@@ -258,5 +287,151 @@ func TestAccessAndManualEvents(t *testing.T) {
 	last := tk.Events[len(tk.Events)-1]
 	if last.Source != delivery.SourceAdmin || last.Actor == nil || last.Actor.ID != "staff1" || last.Reason == "" {
 		t.Fatalf("audit fields = %+v", last)
+	}
+}
+
+func gaveUp(key string, s delivery.Status, at time.Time) delivery.CarrierEvent {
+	e := event(key, s, at)
+	e.Reason, e.GaveUp = "hết số lần giao", true
+	return e
+}
+
+// Decision D42: the carrier re-attempts on the same shipment; once it stops,
+// staff close the shipment with a follow-up.
+func TestCarrierStopsAttempting(t *testing.T) {
+	matrix := identity.ReferencePermissionMatrix()
+	owner, _ := identity.NewPrincipal("cust-a", []identity.Role{identity.RoleCustomer}, matrix)
+	clerk, _ := identity.NewPrincipal("staff1", []identity.Role{identity.RoleRentalStaff}, matrix)
+
+	tk := created(t, delivery.Outbound)
+	_, _ = tk.ApplyCarrierEvent(event("p1", delivery.StatusPickedUp, now))
+	if _, err := tk.ApplyCarrierEvent(gaveUp("x", delivery.StatusInTransit, now)); err == nil {
+		t.Fatal("only a failed attempt can end the attempts")
+	}
+	if out, _ := tk.ApplyCarrierEvent(event("f1", delivery.StatusDeliveryFailed, now.Add(time.Hour))); out != delivery.OutcomeApplied || tk.AwaitingFollowUp() {
+		t.Fatalf("a failed attempt the carrier will retry: %s, awaiting %v", out, tk.AwaitingFollowUp())
+	}
+	if err := tk.CloseUnfulfilled(clerk, delivery.FollowUpNewShipment, "x", now); !errors.Is(err, delivery.ErrInvalidTransition) {
+		t.Fatalf("closing while the carrier still tries err = %v", err)
+	}
+	if out, _ := tk.ApplyCarrierEvent(gaveUp("f2", delivery.StatusDeliveryFailed, now.Add(25*time.Hour))); out != delivery.OutcomeReview ||
+		tk.Status != delivery.StatusManualReview || !tk.AwaitingFollowUp() || len(tk.Attempts) != 2 || tk.Attempts[1].TaskID != tk.ID {
+		t.Fatalf("carrier gave up: %s, task %+v", out, tk)
+	}
+	if a, ok := tk.FinalAttempt(); !ok || a.ID != "f2" {
+		t.Fatalf("final attempt = %+v", a)
+	}
+	// Carrier events while staff decide are history only.
+	if out, _ := tk.ApplyCarrierEvent(event("f3", delivery.StatusInTransit, now.Add(26*time.Hour))); out != delivery.OutcomeStale || !tk.AwaitingFollowUp() {
+		t.Fatalf("event during review = %s", out)
+	}
+
+	if err := tk.CloseUnfulfilled(owner, delivery.FollowUpNewShipment, "x", now); !errors.Is(err, identity.ErrForbidden) {
+		t.Fatalf("customer closing err = %v", err)
+	}
+	if err := tk.CloseUnfulfilled(clerk, delivery.FollowUpNewShipment, " ", now); !errors.Is(err, delivery.ErrReasonRequired) {
+		t.Fatalf("closing without a reason err = %v", err)
+	}
+	if err := tk.CloseUnfulfilled(clerk, delivery.FollowUpNewShipment, "giao lại", now); !errors.Is(err, delivery.ErrAttemptUnclassified) {
+		t.Fatalf("closing before classifying err = %v", err)
+	}
+	if err := tk.ClassifyAttempt(staff, "f2", delivery.FaultCustomer, "khách vắng 3 lần"); err != nil {
+		t.Fatal(err)
+	}
+	back := now.Add(48 * time.Hour)
+	if err := tk.CloseUnfulfilled(clerk, delivery.FollowUpNewShipment, "khách hẹn giao lại thứ Bảy", back); err != nil {
+		t.Fatal(err)
+	}
+	if tk.Status != delivery.StatusClosedUnfulfilled || tk.ReceivedAt == nil || !tk.ReceivedAt.Equal(back) || tk.ClosedBy == nil || tk.ClosedBy.ID != "staff1" {
+		t.Fatalf("closed outbound = %+v", tk)
+	}
+	if err := tk.ClassifyAttempt(staff, "f2", delivery.FaultCarrier, "đổi ý"); !errors.Is(err, delivery.ErrInvalidTransition) {
+		t.Fatalf("reclassifying after closing err = %v", err)
+	}
+	if out, _ := tk.ApplyCarrierEvent(event("f4", delivery.StatusLost, now.Add(50*time.Hour))); out != delivery.OutcomeStale || tk.Status != delivery.StatusClosedUnfulfilled {
+		t.Fatalf("event after closing = %s, status %s", out, tk.Status)
+	}
+
+	w, _ := period.New(now.Add(72*time.Hour), now.Add(74*time.Hour))
+	req := delivery.NewTaskRequest{ID: "task-OUTBOUND-2", BookingRef: "bk-1", CustomerID: "cust-a", Direction: delivery.Outbound, ProviderCode: "ghn",
+		Store: store, Customer: customer, Window: w, Parcel: tk.Parcel, CustomerFee: vnd(30_000), Now: back}
+	if _, err := tk.FollowUpTask(req); err == nil {
+		t.Fatal("the new shipment must be free of charge")
+	}
+	req.CustomerFee = vnd(0)
+	other := req
+	other.BookingRef = "bk-2"
+	if _, err := tk.FollowUpTask(other); !errors.Is(err, delivery.ErrShipmentMismatch) {
+		t.Fatalf("follow-up for another booking err = %v", err)
+	}
+	n, err := tk.FollowUpTask(req)
+	if err != nil || n.Replaces != tk.ID || tk.ReplacedBy != n.ID || n.ClientReference == tk.ClientReference || n.Status != delivery.StatusPendingCreation {
+		t.Fatalf("follow-up = %+v, %v", n, err)
+	}
+	if _, err := tk.FollowUpTask(req); !errors.Is(err, delivery.ErrInvalidTransition) {
+		t.Fatalf("second follow-up err = %v", err)
+	}
+}
+
+func TestCarrierStopsCollecting(t *testing.T) {
+	clerk, _ := identity.NewPrincipal("staff1", []identity.Role{identity.RoleRentalStaff}, identity.ReferencePermissionMatrix())
+	tk := created(t, delivery.Return)
+	e := gaveUp("r1", delivery.StatusPickupFailed, now)
+	e.Fault = delivery.FaultCarrier
+	if out, _ := tk.ApplyCarrierEvent(e); out != delivery.OutcomeReview || !tk.AwaitingFollowUp() {
+		t.Fatalf("pickup given up = %s", out)
+	}
+	if err := tk.CloseUnfulfilled(clerk, delivery.FollowUpEndBooking, "x", now); err == nil {
+		t.Fatal("a return shipment cannot end the booking")
+	}
+	if err := tk.CloseUnfulfilled(clerk, delivery.FollowUpAtStore, "khách tự mang trả", now); err != nil {
+		t.Fatal(err)
+	}
+	if tk.Status != delivery.StatusClosedUnfulfilled || tk.ReceivedAt != nil {
+		t.Fatalf("closed return keeps the items with the customer: %+v", tk)
+	}
+	if _, err := tk.FollowUpTask(delivery.NewTaskRequest{ID: "r2", BookingRef: "bk-1", CustomerID: "cust-a", Direction: delivery.Return}); !errors.Is(err, delivery.ErrInvalidTransition) {
+		t.Fatalf("follow-up shipment after AT_STORE err = %v", err)
+	}
+}
+
+// Decision D43: in manual mode staff record failed attempts seen in the
+// carrier's app, with the fault when known.
+func TestManualAttemptsAndActions(t *testing.T) {
+	matrix := identity.ReferencePermissionMatrix()
+	owner, _ := identity.NewPrincipal("cust-a", []identity.Role{identity.RoleCustomer}, matrix)
+	clerk, _ := identity.NewPrincipal("staff1", []identity.Role{identity.RoleRentalStaff}, matrix)
+	tk := task(t, delivery.Outbound)
+	if got := tk.Actions(); len(got) != 1 || got[0] != delivery.DoRecordShipment {
+		t.Fatalf("new task actions = %v", got)
+	}
+	if _, err := tk.ManualAttempt(clerk, delivery.StatusDeliveryFailed, delivery.FaultCustomer, false, "x", "", now); !errors.Is(err, delivery.ErrInvalidTransition) {
+		t.Fatalf("attempt before the shipment exists err = %v", err)
+	}
+	tk = created(t, delivery.Outbound)
+	_, _ = tk.ApplyCarrierEvent(event("p1", delivery.StatusPickedUp, now))
+	if _, err := tk.ManualAttempt(owner, delivery.StatusDeliveryFailed, delivery.FaultCustomer, false, "x", "", now); !errors.Is(err, identity.ErrForbidden) {
+		t.Fatalf("customer recording an attempt err = %v", err)
+	}
+	if _, err := tk.ManualAttempt(clerk, delivery.StatusDelivered, delivery.FaultCustomer, false, "x", "", now); err == nil {
+		t.Fatal("a delivery is not a failed attempt")
+	}
+	out, err := tk.ManualAttempt(clerk, delivery.StatusDeliveryFailed, delivery.FaultCustomer, false, "khách vắng", "", now.Add(time.Hour))
+	if err != nil || out != delivery.OutcomeApplied || tk.Attempts[0].Fault != delivery.FaultCustomer || tk.Attempts[0].ClassifiedBy == nil {
+		t.Fatalf("classified attempt = %s %v %+v", out, err, tk.Attempts)
+	}
+	out, err = tk.ManualAttempt(clerk, delivery.StatusDeliveryFailed, "", true, "hết số lần", "", now.Add(25*time.Hour))
+	if err != nil || out != delivery.OutcomeReview || tk.Attempts[1].Fault != delivery.FaultUnknown || tk.Attempts[1].ClassifiedBy != nil {
+		t.Fatalf("given up = %s %v %+v", out, err, tk.Attempts)
+	}
+	if got := tk.Actions(); slices.Contains(got, delivery.DoClose) || !slices.Contains(got, delivery.DoClassifyAttempt) {
+		t.Fatalf("unclassified final attempt actions = %v", got)
+	}
+	if _, err := tk.ManualAttempt(clerk, delivery.StatusDeliveryFailed, "", false, "x", "", now.Add(26*time.Hour)); !errors.Is(err, delivery.ErrInvalidTransition) {
+		t.Fatalf("attempt while awaiting staff err = %v", err)
+	}
+	_ = tk.ClassifyAttempt(staff, tk.GaveUpAttempt, delivery.FaultCarrier, "shipper báo sai")
+	if got := tk.Actions(); !slices.Contains(got, delivery.DoClose) || slices.Contains(got, delivery.DoClassifyAttempt) {
+		t.Fatalf("classified final attempt actions = %v", got)
 	}
 }

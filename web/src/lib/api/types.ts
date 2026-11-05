@@ -168,7 +168,57 @@ export interface StoreCalendar {
 export interface FulfillmentOptions {
   outbound: LegMode[];
   return: LegMode[];
-  zones: { id: string; name: string; wards: { code: string; name: string }[] }[];
+  zones: { id: string; name: string; wards: { code: string; name: string }[]; outbound_fee: Money; return_fee: Money; redelivery_fee: Money }[];
+}
+
+export type DeliveryDirection = 'OUTBOUND' | 'RETURN';
+export type DeliveryStatus =
+  | 'PENDING_CREATION' | 'CREATED' | 'READY_FOR_PICKUP' | 'PICKED_UP' | 'IN_TRANSIT' | 'DELIVERED'
+  | 'SCHEDULED' | 'COURIER_ASSIGNED' | 'PICKUP_CONFIRMED' | 'RECEIVED_AT_STORE'
+  | 'CREATION_FAILED' | 'PICKUP_FAILED' | 'DELIVERY_FAILED' | 'RETURN_FAILED' | 'CANCEL_REQUESTED' | 'CANCELLED'
+  | 'LOST' | 'DAMAGED' | 'MANUAL_REVIEW' | 'CLOSED_UNFULFILLED';
+export type DeliveryFault = 'UNKNOWN' | 'CUSTOMER' | 'STORE' | 'CARRIER';
+export type FollowUp = 'NEW_SHIPMENT' | 'AT_STORE' | 'END_BOOKING';
+export type DeliveryAction = 'RECORD_SHIPMENT' | 'MARK_READY' | 'RECORD_EVENT' | 'CLASSIFY_ATTEMPT' | 'CLOSE' | 'RECEIVE' | 'CONFIRM_CANCELLED';
+
+export interface DeliveryAttempt {
+  id: string;
+  status: DeliveryStatus;
+  at: string;
+  fault: DeliveryFault;
+  reason: string;
+  classified: boolean;
+}
+
+/** One shipment of a booking. Staff fields are empty for the customer. */
+export interface DeliveryTask {
+  id: string;
+  booking_id: string;
+  booking_code: string;
+  customer_name: string;
+  direction: DeliveryDirection;
+  status: DeliveryStatus;
+  provider: string;
+  shipment_code: string | null;
+  window_from: string;
+  window_until: string;
+  expected_at: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  received_at: string | null;
+  customer_fee: Money;
+  address: { recipient_name: string; phone: string; line: string; ward_code: string; ward_name: string };
+  attempts: DeliveryAttempt[];
+  gave_up_at: string | null;
+  follow_up: FollowUp | null;
+  closed_reason: string;
+  replaces: string | null;
+  replaced_by: string | null;
+  failure_reason: string;
+  actions: DeliveryAction[];
+  can_collect_at_store: boolean;
+  can_end_booking: boolean;
+  awaiting_follow_up: boolean;
 }
 
 export interface BookingLineInput {

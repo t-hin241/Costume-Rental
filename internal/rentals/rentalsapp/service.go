@@ -4,8 +4,9 @@
 // in one transaction, so a failure leaves nothing half-written.
 //
 // Lock order, followed everywhere to avoid deadlocks: booking row, then its
-// modification row, then asset rows in id order (inventorypg). A ledger row
-// is only taken while holding its booking, so it adds no ordering of its own.
+// modification row, then its delivery tasks, then asset rows in id order
+// (inventorypg). A ledger row is only taken while holding its booking, so it
+// adds no ordering of its own.
 package rentalsapp
 
 import (
@@ -21,6 +22,7 @@ import (
 	"webee_rentor/internal/audit"
 	"webee_rentor/internal/audit/auditpg"
 	"webee_rentor/internal/catalog"
+	"webee_rentor/internal/delivery"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory"
 	"webee_rentor/internal/inventory/inventorypg"
@@ -66,6 +68,11 @@ type config struct {
 	policy     rentals.Policy
 	allocation inventory.AllocationPolicy
 	calendar   *rentals.StoreCalendar
+	// area is the active courier service area; nil means only the counter
+	// is offered (decision D43).
+	area *delivery.ServiceArea
+	// courier reads the calendar for a courier outbound (delivery windows).
+	courier bool
 }
 
 func (s *Service) config(ctx context.Context, q postgres.Querier) (config, error) {
@@ -81,6 +88,13 @@ func (s *Service) config(ctx context.Context, q postgres.Querier) (config, error
 		return config{}, err
 	}
 	c.calendar = cal
+	var area delivery.ServiceArea
+	switch _, err := postgres.ActiveDocument(ctx, q, postgres.DocDeliveryArea, &area); {
+	case err == nil:
+		c.area = &area
+	case !errors.Is(err, postgres.ErrNotFound):
+		return config{}, err
+	}
 	return c, nil
 }
 

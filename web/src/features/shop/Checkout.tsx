@@ -141,17 +141,23 @@ export default function Checkout() {
 
           <Card title="Lịch thuê">
             {packages.isPending ? <Skeleton height={200} /> : packages.isError ? <QueryError error={packages.error} /> : (
-              <SchedulePicker packages={packages.data.filter((p) => p.status === 'ACTIVE')} value={bag.schedule} onChange={bag.setSchedule} />
+              <SchedulePicker packages={packages.data.filter((p) => p.status === 'ACTIVE')} value={bag.schedule} onChange={bag.setSchedule} outbound={outbound} />
             )}
           </Card>
 
           <Card title="Nhận và trả hàng">
             {legOptions ? (
               <div className="stack">
-                <LegChoice title="Cách nhận" direction="outbound" options={legOptions.outbound} value={outbound} onChange={setOutbound} />
+                <LegChoice title="Cách nhận" direction="outbound" options={legOptions.outbound} value={outbound}
+                  onChange={(m) => { if (m !== outbound) { setOutbound(m); bag.setSchedule({ slot_id: undefined }); } }} />
                 <LegChoice title="Cách trả" direction="return" options={legOptions.return} value={returnLeg} onChange={setReturnLeg} />
                 {courier && (
                   <div className="form-grid">
+                    <div className="full">
+                      <Notice tone="info">
+                        Chỉ giao và lấy hàng trong các phường dưới đây. Khi giao tận nơi, thời gian thuê bắt đầu từ cuối khung giờ giao; khi shipper đến lấy, hạn trả là cuối khung giờ lấy.
+                      </Notice>
+                    </div>
                     <Field label="Người nhận" required>
                       <Input autoComplete="name" value={address.recipient_name} onChange={(e) => setAddress({ ...address, recipient_name: e.target.value })} />
                     </Field>

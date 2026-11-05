@@ -17,6 +17,9 @@ const (
 	DocAllocationPolicy DocumentKind = "INVENTORY_ALLOCATION"
 	DocPermissionMatrix DocumentKind = "PERMISSION_MATRIX"
 	DocPaymentApproval  DocumentKind = "PAYMENT_APPROVAL"
+	// DocDeliveryArea is the courier service area with its fee table
+	// (decision D43); without an active version only the counter is offered.
+	DocDeliveryArea DocumentKind = "DELIVERY_AREA"
 )
 
 // SaveDocument stores a new immutable policy version and, when activate is

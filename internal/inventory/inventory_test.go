@@ -253,6 +253,32 @@ func TestLateReturnBlocksUntilReturned(t *testing.T) {
 	}
 }
 
+// Decision D42: a late courier delivery moves the due time; the allocation is
+// extended only when the extra time is free.
+func TestExtendInUseAllocation(t *testing.T) {
+	out := allocate(t, "a1", "b1", inventory.PlannedAllocation{AssetID: "JK-M-1", VariantID: "jacket-m", Block: block(t, 0, 50*time.Hour)})
+	if _, err := out.Extend(t0.Add(60*time.Hour), nil); !errors.Is(err, inventory.ErrAllocationNotActive) {
+		t.Fatalf("extending before handover err = %v", err)
+	}
+	if err := out.MarkHandedOver(t0.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	next := allocate(t, "a2", "b2", inventory.PlannedAllocation{AssetID: "JK-M-1", VariantID: "jacket-m", Block: block(t, 55*time.Hour, 80*time.Hour)})
+	otherAsset := allocate(t, "a3", "b3", inventory.PlannedAllocation{AssetID: "JK-M-2", VariantID: "jacket-m", Block: block(t, 50*time.Hour, 80*time.Hour)})
+
+	conflicts, err := out.Extend(t0.Add(60*time.Hour), []inventory.Allocation{out, next, otherAsset})
+	if err != nil || len(conflicts) != 1 || conflicts[0].ID != "a2" || !out.Block.End().Equal(t0.Add(50*time.Hour)) {
+		t.Fatalf("extra time taken by a2: conflicts %+v, err %v, block %s", conflicts, err, out.Block)
+	}
+	conflicts, err = out.Extend(t0.Add(55*time.Hour), []inventory.Allocation{out, next, otherAsset})
+	if err != nil || len(conflicts) != 0 || !out.Block.End().Equal(t0.Add(55*time.Hour)) || !out.Block.Start().Equal(t0) {
+		t.Fatalf("free extra time up to a2: conflicts %+v, err %v, block %s", conflicts, err, out.Block)
+	}
+	if _, err := out.Extend(t0.Add(40*time.Hour), nil); err != nil || !out.Block.End().Equal(t0.Add(55*time.Hour)) {
+		t.Fatalf("an earlier end never shortens the block: %v, %s", err, out.Block)
+	}
+}
+
 func TestAllocationLifecycle(t *testing.T) {
 	al := allocate(t, "a1", "b1", inventory.PlannedAllocation{AssetID: "JK-M-1", VariantID: "jacket-m", Block: block(t, 0, 50*time.Hour)})
 	if err := al.MarkHandedOver(t0.Add(-time.Minute)); !errors.Is(err, inventory.ErrHandoverOutsideBlock) {

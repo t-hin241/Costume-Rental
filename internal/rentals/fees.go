@@ -127,7 +127,8 @@ type FeeAssessment struct {
 	DecidedAt     *time.Time
 	DecisionNote  string
 	DisputeNote   string
-	// Ref is the failed delivery attempt a redelivery fee is for.
+	// Ref is the shipment (delivery task) a redelivery fee is for; the basis
+	// names the failed attempt.
 	Ref string
 	// Supersedes/SupersededBy link an adjustment to the original.
 	Supersedes   AssessmentID
@@ -229,6 +230,9 @@ func (b *Booking) ProposeFee(existing []FeeAssessment, req ProposeFeeRequest, p 
 			FeeDamageRepair:      {CondMinorRepairable, CondMajorRepairable},
 			FeeDamageReplacement: {CondIrreparable},
 		}[req.Kind]
+		if it.NotReceived {
+			return FeeAssessment{}, fmt.Errorf("asset %s never reached the customer: %w", req.Asset, ErrFeeNotAllowed)
+		}
 		if it.Finding == nil || !slices.ContainsFunc(need, it.Finding.has) {
 			return FeeAssessment{}, fmt.Errorf("asset %s finding does not support %s: %w", req.Asset, req.Kind, ErrFeeNotAllowed)
 		}
@@ -245,17 +249,21 @@ func (b *Booking) ProposeFee(existing []FeeAssessment, req ProposeFeeRequest, p 
 }
 
 // proposeRedelivery charges the snapshot zone re-attempt fee for an attempt
-// staff classified as the customer's fault; one fee per attempt.
+// staff classified as the customer's fault: at most one fee per shipment,
+// however many times the carrier tries it (decision D42).
 func (b *Booking) proposeRedelivery(existing []FeeAssessment, req ProposeFeeRequest, p identity.Principal, now time.Time) (FeeAssessment, error) {
 	if req.Attempt == nil || req.Attempt.Fault != delivery.FaultCustomer {
 		return FeeAssessment{}, fmt.Errorf("redelivery needs a customer-caused failed attempt: %w", ErrFeeNotAllowed)
+	}
+	if req.Attempt.TaskID == "" {
+		return FeeAssessment{}, domainerr.Invalid("attempt", "the shipment of the attempt is required")
 	}
 	if !b.Fulfillment.courier() || !b.Fulfillment.RedeliveryFee.IsPositive() {
 		return FeeAssessment{}, fmt.Errorf("booking %s has no redelivery fee: %w", b.ID, ErrFeeNotAllowed)
 	}
 	for _, e := range existing {
-		if e.Kind == FeeRedelivery && e.Ref == req.Attempt.ID && e.Status.active() {
-			return FeeAssessment{}, fmt.Errorf("attempt %s: %w", req.Attempt.ID, ErrDuplicateFee)
+		if e.Kind == FeeRedelivery && e.Ref == string(req.Attempt.TaskID) && e.Status.active() {
+			return FeeAssessment{}, fmt.Errorf("shipment %s: %w", req.Attempt.TaskID, ErrDuplicateFee)
 		}
 	}
 	basis := req.Basis
@@ -263,7 +271,7 @@ func (b *Booking) proposeRedelivery(existing []FeeAssessment, req ProposeFeeRequ
 		basis = "failed attempt " + req.Attempt.ID + ": " + req.Attempt.Reason
 	}
 	a := b.newAssessment(req.ID, "", FeeRedelivery, b.Fulfillment.RedeliveryFee, basis, req.Evidence, p.Actor(), now)
-	a.Ref = req.Attempt.ID
+	a.Ref = string(req.Attempt.TaskID)
 	return a, nil
 }
 

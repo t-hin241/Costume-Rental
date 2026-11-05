@@ -1,6 +1,6 @@
 import type {
   AssessmentStatus, AssetAction, AssetStatus, AuditResult, BookingAction, BookingItemState, BookingStatus, Bucket,
-  CampaignStatus, CampaignType, CatalogStatus, ChargeKind, Condition, FeeKind, FundsRequirement, LegMode,
+  CampaignStatus, CampaignType, CatalogStatus, ChargeKind, Condition, DeliveryDirection, DeliveryFault, DeliveryStatus, FeeKind, FollowUp, FundsRequirement, LegMode,
   PaymentChannel, PaymentMethod, PaymentPurpose, PaymentState, PaymentStatus, RefundStatus, RetentionBlocker, Role, SupportStatus, SupportTopic, UserStatus,
   ReportGroup, RevenueCategory, RevenueMismatch, RevenueSource, ThresholdLevel, TxnKind,
 } from './api/types';
@@ -189,6 +189,39 @@ export const auditResult: Record<AuditResult, StatusLabel> = {
   SUCCESS: { label: 'Thành công', tone: 'success' },
   DENIED: { label: 'Bị từ chối', tone: 'danger' },
   FAILED: { label: 'Thất bại', tone: 'warning' },
+};
+
+export const deliveryStatus: Record<DeliveryStatus, StatusLabel> = {
+  PENDING_CREATION: { label: 'Chờ tạo vận đơn', tone: 'warning' },
+  CREATED: { label: 'Đã có vận đơn', tone: 'info' },
+  READY_FOR_PICKUP: { label: 'Chờ shipper lấy', tone: 'info' },
+  PICKED_UP: { label: 'Shipper đã lấy', tone: 'info' },
+  IN_TRANSIT: { label: 'Đang vận chuyển', tone: 'info' },
+  DELIVERED: { label: 'Đã giao', tone: 'success' },
+  SCHEDULED: { label: 'Chưa đến lịch lấy', tone: 'neutral' },
+  COURIER_ASSIGNED: { label: 'Đã hẹn shipper', tone: 'info' },
+  PICKUP_CONFIRMED: { label: 'Shipper đã lấy', tone: 'info' },
+  RECEIVED_AT_STORE: { label: 'Đã về cửa hàng', tone: 'success' },
+  CREATION_FAILED: { label: 'Tạo vận đơn lỗi', tone: 'danger' },
+  PICKUP_FAILED: { label: 'Lấy hàng thất bại', tone: 'danger' },
+  DELIVERY_FAILED: { label: 'Giao thất bại', tone: 'danger' },
+  RETURN_FAILED: { label: 'Chuyển về thất bại', tone: 'danger' },
+  CANCEL_REQUESTED: { label: 'Chờ hãng hủy', tone: 'warning' },
+  CANCELLED: { label: 'Đã hủy', tone: 'neutral' },
+  LOST: { label: 'Hãng làm mất', tone: 'danger' },
+  DAMAGED: { label: 'Hãng báo hỏng', tone: 'danger' },
+  MANUAL_REVIEW: { label: 'Cần nhân viên xử lý', tone: 'warning' },
+  CLOSED_UNFULFILLED: { label: 'Đã đóng', tone: 'neutral' },
+};
+
+export const deliveryDirection: Record<DeliveryDirection, string> = { OUTBOUND: 'Giao đến khách', RETURN: 'Lấy hàng trả' };
+
+export const deliveryFault: Record<DeliveryFault, string> = {
+  UNKNOWN: 'Chưa rõ', CUSTOMER: 'Do khách', STORE: 'Do cửa hàng', CARRIER: 'Do hãng vận chuyển',
+};
+
+export const followUp: Record<FollowUp, string> = {
+  NEW_SHIPMENT: 'Tạo vận đơn mới (miễn phí)', AT_STORE: 'Khách nhận/trả tại cửa hàng', END_BOOKING: 'Kết thúc đơn, không giao được',
 };
 
 export const supportStatus: Record<SupportStatus, StatusLabel> = {

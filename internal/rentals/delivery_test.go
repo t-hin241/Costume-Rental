@@ -35,16 +35,56 @@ func placeCourier(t *testing.T, out rentals.LegMode, slot string, ret rentals.Le
 // dispatched places a courier/courier booking and hands it to the courier.
 func dispatched(t *testing.T) (*rentals.Booking, []inventory.AssetID) {
 	t.Helper()
+	p := dispatchedPlacement(t)
+	return p.Booking, allocatedAssets(p)
+}
+
+func dispatchedPlacement(t *testing.T) rentals.Placement {
+	t.Helper()
 	p := placeCourier(t, rentals.LegCourier, "mid", rentals.LegCourier)
 	b := p.Booking
 	_, _ = b.Confirm(system, funds(60_000, 0, 60_000), now)
 	_, _ = b.StartPreparation(staff, now)
-	assets := allocatedAssets(p)
-	if _, err := b.RecordHandover(rentals.HandoverRequest{Actor: staff, Allocated: allocated(p), Delivered: delivered(assets...),
+	if _, err := b.RecordHandover(rentals.HandoverRequest{Actor: staff, Allocated: allocated(p), Delivered: delivered(allocatedAssets(p)...),
 		ChecklistCompleted: true, Funds: funds(260_000, 550_000, 60_000), Now: b.Schedule.PickupAt.Add(-3 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	return b, assets
+	return p
+}
+
+// closedOutbound is the booking's outbound shipment that the carrier gave up
+// on, classified and closed by staff with the parcel back in the store.
+func closedOutbound(t *testing.T, b *rentals.Booking, fault delivery.Fault, follow delivery.FollowUp, back time.Time) *delivery.Task {
+	t.Helper()
+	// Fake test addresses only.
+	store := delivery.Address{RecipientName: "Cửa hàng", Phone: "0900000000", Line: "1 Đường A", WardCode: "W1", DistrictCode: "D1", ProvinceCode: "P1"}
+	home := delivery.Address{RecipientName: "Khách Test", Phone: "0911111111", Line: "2 Đường B", WardCode: "W2", DistrictCode: "D3", ProvinceCode: "P1"}
+	tk, err := delivery.NewTask(delivery.NewTaskRequest{ID: delivery.TaskID("out-" + string(follow)), BookingRef: string(b.ID), CustomerID: b.CustomerID,
+		Direction: delivery.Outbound, ProviderCode: "ghn", Store: store, Customer: home, Window: *b.Fulfillment.OutboundWindow,
+		Parcel: delivery.Parcel{WeightGram: 800, PackageCount: 1}, CustomerFee: vnd(30_000), Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tk.RecordCreated(delivery.ShipmentResult{ProviderShipmentCode: "GHN1"}); err != nil {
+		t.Fatal(err)
+	}
+	start := b.Schedule.PickupAt
+	ev := func(key string, s delivery.Status, at time.Time) delivery.CarrierEvent {
+		return delivery.CarrierEvent{Provider: "ghn", ShipmentCode: "GHN1", Key: key, Status: s, OccurredAt: at, ReceivedAt: at}
+	}
+	_, _ = tk.ApplyCarrierEvent(ev("p1", delivery.StatusPickedUp, start.Add(-2*time.Hour)))
+	last := ev("f1", delivery.StatusDeliveryFailed, start.Add(time.Hour))
+	last.GaveUp, last.Reason = true, "không liên lạc được"
+	if out, err := tk.ApplyCarrierEvent(last); err != nil || out != delivery.OutcomeReview {
+		t.Fatalf("give up = %s, %v", out, err)
+	}
+	if err := tk.ClassifyAttempt(staff, "f1", fault, "đã gọi 3 lần"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tk.CloseUnfulfilled(principal(t, "staff1", identity.RoleRentalStaff), follow, "hàng đã về kho", back); err != nil {
+		t.Fatal(err)
+	}
+	return tk
 }
 
 func TestResolveFulfillment(t *testing.T) {
@@ -206,16 +246,178 @@ func TestCarrierLossIsNotCharged(t *testing.T) {
 func TestRedeliveryFee(t *testing.T) {
 	clerk := principal(t, "staff1", identity.RoleRentalStaff)
 	b, _ := dispatched(t)
-	customerFault := delivery.Attempt{ID: "att-1", Fault: delivery.FaultCustomer, Reason: "sai địa chỉ"}
+	customerFault := delivery.Attempt{ID: "att-1", TaskID: "task-1", Fault: delivery.FaultCustomer, Reason: "sai địa chỉ"}
 	fee, err := b.ProposeFee(nil, rentals.ProposeFeeRequest{ID: "f1", Kind: rentals.FeeRedelivery, Attempt: &customerFault}, clerk, now)
-	if err != nil || fee.Amount.Amount() != 20_000 || fee.Ref != "att-1" || fee.Status != rentals.AssessmentProposed {
+	if err != nil || fee.Amount.Amount() != 20_000 || fee.Ref != "task-1" || fee.Status != rentals.AssessmentProposed {
 		t.Fatalf("redelivery fee = %+v, %v", fee, err)
 	}
-	if _, err := b.ProposeFee([]rentals.FeeAssessment{fee}, rentals.ProposeFeeRequest{ID: "f2", Kind: rentals.FeeRedelivery, Attempt: &customerFault}, clerk, now); !errors.Is(err, rentals.ErrDuplicateFee) {
+	propose := func(id string, a delivery.Attempt, existing ...rentals.FeeAssessment) (rentals.FeeAssessment, error) {
+		return b.ProposeFee(existing, rentals.ProposeFeeRequest{ID: rentals.AssessmentID(id), Kind: rentals.FeeRedelivery, Attempt: &a}, clerk, now)
+	}
+	if _, err := propose("f2", customerFault, fee); !errors.Is(err, rentals.ErrDuplicateFee) {
 		t.Fatalf("second fee for one attempt err = %v", err)
 	}
-	carrierFault := delivery.Attempt{ID: "att-2", Fault: delivery.FaultCarrier}
-	if _, err := b.ProposeFee(nil, rentals.ProposeFeeRequest{ID: "f3", Kind: rentals.FeeRedelivery, Attempt: &carrierFault}, clerk, now); !errors.Is(err, rentals.ErrFeeNotAllowed) {
+	// Decision D42: the carrier tried the same shipment again and the customer
+	// was absent again; still one fee for the shipment.
+	again := delivery.Attempt{ID: "att-2", TaskID: "task-1", Fault: delivery.FaultCustomer, Reason: "khách vắng"}
+	if _, err := propose("f2", again, fee); !errors.Is(err, rentals.ErrDuplicateFee) {
+		t.Fatalf("second fee for one shipment err = %v", err)
+	}
+	newShipment := delivery.Attempt{ID: "att-3", TaskID: "task-2", Fault: delivery.FaultCustomer, Reason: "khách vắng"}
+	if f, err := propose("f3", newShipment, fee); err != nil || f.Ref != "task-2" {
+		t.Fatalf("fee for a new shipment = %+v, %v", f, err)
+	}
+	if _, err := propose("f4", delivery.Attempt{ID: "att-4", Fault: delivery.FaultCustomer}); err == nil {
+		t.Fatal("an attempt without its shipment cannot be charged")
+	}
+	carrierFault := delivery.Attempt{ID: "att-5", TaskID: "task-3", Fault: delivery.FaultCarrier}
+	if _, err := propose("f5", carrierFault); !errors.Is(err, rentals.ErrFeeNotAllowed) {
 		t.Fatalf("redelivery fee for a carrier failure err = %v", err)
+	}
+}
+
+// Decision D42: delivery delay only counts for the customer until the first
+// attempt the customer caused to fail.
+func TestCustomerMissedDeliveryStopsTheDelayCredit(t *testing.T) {
+	b, assets := dispatched(t)
+	start, due := b.Schedule.PickupAt, b.Schedule.DueAt
+	if _, err := b.RecordDeliveryFailure(system, delivery.Attempt{ID: "a1", At: start.Add(time.Hour), Fault: delivery.FaultUnknown}); err == nil {
+		t.Fatal("unclassified attempts must be classified first")
+	}
+	if _, err := b.RecordDeliveryFailure(system, delivery.Attempt{ID: "a1", At: start.Add(time.Hour), Fault: delivery.FaultCustomer, Reason: "khách vắng"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = b.RecordDelivered(system, start.Add(25*time.Hour))
+	if _, err := b.RecordDeliveryFailure(system, delivery.Attempt{ID: "a2", At: start, Fault: delivery.FaultCustomer}); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("failure after delivery err = %v", err)
+	}
+	// Handed back 3h after due: 1h of delay is credited, 2h are late (25%).
+	_, _ = b.RecordCourierPickup(system, assets[:1], due.Add(3*time.Hour))
+	if q, _ := b.QuoteLateFee(assets[0], false); q.Lateness != 2*time.Hour || q.Percent != 25 {
+		t.Fatalf("customer-caused delay quote = %+v", q)
+	}
+
+	// The carrier failed: the whole delay is credited.
+	b, assets = dispatched(t)
+	start, due = b.Schedule.PickupAt, b.Schedule.DueAt
+	_, _ = b.RecordDeliveryFailure(system, delivery.Attempt{ID: "a1", At: start.Add(time.Hour), Fault: delivery.FaultCarrier, Reason: "shipper hỏng xe"})
+	_, _ = b.RecordDelivered(system, start.Add(25*time.Hour))
+	_, _ = b.RecordCourierPickup(system, assets[:1], due.Add(3*time.Hour))
+	if q, _ := b.QuoteLateFee(assets[0], false); q.Lateness != 0 {
+		t.Fatalf("carrier-caused delay quote = %+v", q)
+	}
+}
+
+func TestDelayedBlockEnd(t *testing.T) {
+	p := dispatchedPlacement(t)
+	b := p.Booking
+	if _, ok, err := b.DelayedBlockEnd(p.Allocations[0].AssetID); ok || err != nil {
+		t.Fatalf("no delay yet: ok %v, err %v", ok, err)
+	}
+	_, _ = b.RecordDelivered(system, b.Schedule.PickupAt.Add(3*time.Hour))
+	for _, a := range p.Allocations {
+		end, ok, err := b.DelayedBlockEnd(a.AssetID)
+		if err != nil || !ok || !end.Equal(a.Block.End().Add(3*time.Hour)) {
+			t.Fatalf("%s: end %s ok %v err %v, want block end %s + 3h", a.AssetID, end, ok, err, a.Block.End())
+		}
+	}
+}
+
+func TestCollectedAtStoreAfterFailedDelivery(t *testing.T) {
+	b, assets := dispatched(t)
+	back := b.Schedule.PickupAt.Add(30 * time.Hour)
+	ended := closedOutbound(t, b, delivery.FaultCarrier, delivery.FollowUpEndBooking, back)
+	if _, err := b.RecordCollectedAtStore(staff, ended, back.Add(time.Hour)); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("collecting a shipment closed to end the booking err = %v", err)
+	}
+	tk := closedOutbound(t, b, delivery.FaultCarrier, delivery.FollowUpAtStore, back)
+	if _, err := b.RecordCollectedAtStore(staff, tk, back.Add(-time.Hour)); err == nil {
+		t.Fatal("collected before the parcel was back")
+	}
+	if _, err := b.RecordCollectedAtStore(staff, tk, back.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if !b.Fulfillment.CollectedAtStore || !b.Fulfillment.DeliveredAt.Equal(back.Add(2*time.Hour)) {
+		t.Fatalf("fulfillment = %+v", b.Fulfillment)
+	}
+	if _, err := b.RecordCollectedAtStore(staff, tk, back.Add(3*time.Hour)); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("collecting twice err = %v", err)
+	}
+	_, _, err := b.RaiseDeliveryComplaint(nil, rentals.ComplaintRequest{ID: "c1", Actor: identity.UserActor(customer), Kind: rentals.ComplaintMissingItem,
+		Assets: assets[:1], Description: "thiếu", Now: back.Add(3 * time.Hour)})
+	if !errors.Is(err, rentals.ErrComplaintNotAllowed) {
+		t.Fatalf("complaint after a counter collection err = %v", err)
+	}
+	if _, ok, _ := b.DelayedBlockEnd(assets[0]); !ok {
+		t.Fatal("the carrier caused the delay: the due time moves")
+	}
+}
+
+func TestEndUndelivered(t *testing.T) {
+	clerk := principal(t, "staff1", identity.RoleRentalStaff)
+	b, assets := dispatched(t)
+	rent := b.RentTotal
+	back := b.Schedule.PickupAt.Add(30 * time.Hour)
+	if _, err := b.RecordLostInTransit(staff, assets[0], "thất lạc", b.Schedule.PickupAt); err != nil {
+		t.Fatal(err)
+	}
+	atStore := closedOutbound(t, b, delivery.FaultCustomer, delivery.FollowUpAtStore, back)
+	if _, _, err := b.EndUndelivered(rentals.UndeliveredRequest{Actor: staff, Task: atStore, Now: back}); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("ending with a shipment closed for counter pickup err = %v", err)
+	}
+	tk := closedOutbound(t, b, delivery.FaultCustomer, delivery.FollowUpEndBooking, back)
+	end, tr, err := b.EndUndelivered(rentals.UndeliveredRequest{Actor: staff, Task: tk, Now: back.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := rent.Amount() * 70 / 100
+	if end.Rent.Amount() != want || b.RentTotal.Amount() != want || end.RentBefore != rent || end.FeePercent != 70 ||
+		!end.WaiveReturn || end.WaiveOutbound || end.Fault != delivery.FaultCustomer || b.Fulfillment.Undelivered == nil {
+		t.Fatalf("customer-caused end = %+v, rent %s", end, b.RentTotal)
+	}
+	if tr.To != rentals.StatusReturnInspection || b.Status != rentals.StatusReturnInspection {
+		t.Fatalf("status = %s", b.Status)
+	}
+	lost, _ := b.Item(assets[0])
+	if lost.LostConfirmedAt == nil || lost.ReceivedAt != nil || lost.NotReceived {
+		t.Fatalf("the item lost in transit stays lost: %+v", lost)
+	}
+	it, _ := b.Item(assets[1])
+	if !it.NotReceived || it.ReceivedAt == nil || !it.ReceivedAt.Equal(back) {
+		t.Fatalf("undelivered item = %+v", it)
+	}
+	if q, _ := b.QuoteLateFee(assets[1], false); !q.Amount.IsZero() {
+		t.Fatalf("late fee for an item never delivered = %s", q.Amount)
+	}
+	if _, err := b.RecordInspection(staff, assets[1], rentals.InspectionFinding{Conditions: []rentals.Condition{rentals.CondMinorRepairable}, Evidence: photo}, back); err != nil {
+		t.Fatal(err)
+	}
+	req := rentals.ProposeFeeRequest{ID: "f1", Asset: assets[1], Kind: rentals.FeeDamageRepair, Amount: vnd(30_000), Basis: "sửa", Evidence: photo, ConfirmedNewDamage: true}
+	if _, err := b.ProposeFee(nil, req, clerk, now); !errors.Is(err, rentals.ErrFeeNotAllowed) {
+		t.Fatalf("damage fee on an item the customer never had err = %v", err)
+	}
+	if _, _, err := b.EndUndelivered(rentals.UndeliveredRequest{Actor: staff, Task: tk, Now: back}); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("ending twice err = %v", err)
+	}
+
+	// The store or the carrier caused it: nothing is kept.
+	b, _ = dispatched(t)
+	tk = closedOutbound(t, b, delivery.FaultCarrier, delivery.FollowUpEndBooking, back)
+	end, _, err = b.EndUndelivered(rentals.UndeliveredRequest{Actor: staff, Task: tk, Now: back})
+	if err != nil || !end.Rent.IsZero() || !b.RentTotal.IsZero() || end.FeePercent != 0 || !end.WaiveOutbound || !end.WaiveReturn {
+		t.Fatalf("carrier-caused end = %+v, %v", end, err)
+	}
+
+	// Another booking's shipment, or a delivered booking, cannot end it.
+	b, _ = dispatched(t)
+	tk = closedOutbound(t, b, delivery.FaultCarrier, delivery.FollowUpEndBooking, back)
+	tk.BookingRef = "someone-else"
+	if _, _, err := b.EndUndelivered(rentals.UndeliveredRequest{Actor: staff, Task: tk, Now: back}); err == nil {
+		t.Fatal("another booking's shipment ended this booking")
+	}
+	_, _ = b.RecordDelivered(system, b.Schedule.PickupAt)
+	tk = closedOutbound(t, b, delivery.FaultCarrier, delivery.FollowUpEndBooking, back)
+	if _, _, err := b.EndUndelivered(rentals.UndeliveredRequest{Actor: staff, Task: tk, Now: back}); !errors.Is(err, rentals.ErrInvalidTransition) {
+		t.Fatalf("ending a delivered booking err = %v", err)
 	}
 }

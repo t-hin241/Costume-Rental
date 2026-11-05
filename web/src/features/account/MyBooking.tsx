@@ -7,6 +7,7 @@ import { bookingApi, storeApi } from '../../lib/api/endpoints';
 import type { BookingDetail } from '../../lib/api/types';
 import { formatMoney } from '../../lib/format';
 import { bookingStatus, paymentState } from '../../lib/labels';
+import { DeliveryTracking } from '../bookings/delivery';
 import { BookingLines, BookingStepper, FinanceSummary, HoldCountdown, PaymentHistory, TransitionList, scheduleFacts } from '../bookings/parts';
 import { PayOnline } from '../payment/PayOnline';
 import { StoreCalendarPicker } from '../shop/shared';
@@ -45,6 +46,7 @@ function BookingView({ booking }: { booking: BookingDetail }) {
         {store.data?.online_payment_available && booking.payment_options.length > 0 && <PayOnline booking={booking} channels={store.data.payment_channels} />}
         <div className="split">
           <div className="stack">
+            {(booking.outbound === 'COURIER' || booking.return === 'COURIER') && <DeliveryTracking bookingId={booking.id} />}
             <Card title="Trang phục"><BookingLines booking={booking} /></Card>
             <Card title="Lịch sử đơn"><TransitionList transitions={booking.transitions} /></Card>
           </div>

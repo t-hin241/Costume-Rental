@@ -30,6 +30,9 @@ type Summary struct {
 	Customer     identity.Contact
 	Image        *catalog.Image
 	Overdue      bool
+	// ContactVisible: the viewer may see the customer's full phone number and
+	// delivery addresses (decision D40, extended to addresses by D43).
+	ContactVisible bool
 }
 
 // BookingItemState says where one unit of a booking is.
@@ -149,10 +152,11 @@ func (s *Service) summaries(ctx context.Context, q postgres.Querier, viewer iden
 	out := make([]Summary, len(bs))
 	for i, b := range bs {
 		c := people[b.CustomerID]
-		if !seesWholeProfile(viewer, b) && !b.StaffSeesFullContact(settled[i], now) {
+		visible := seesWholeProfile(viewer, b) || b.StaffSeesFullContact(settled[i], now)
+		if !visible {
 			c = c.WithMaskedPhone()
 		}
-		out[i] = Summary{Booking: b, PaymentState: states[i], Customer: c, Image: imageOf(images, b), Overdue: b.IsOverdue(now)}
+		out[i] = Summary{Booking: b, PaymentState: states[i], Customer: c, Image: imageOf(images, b), Overdue: b.IsOverdue(now), ContactVisible: visible}
 	}
 	return out, nil
 }

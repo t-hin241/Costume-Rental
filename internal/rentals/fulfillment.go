@@ -57,6 +57,17 @@ type Fulfillment struct {
 	// ReturnReadyAt is when the customer was ready for a courier pickup that
 	// failed because of the store or the carrier; lateness stops there.
 	ReturnReadyAt *time.Time
+	// CustomerMissedDeliveryAt is the first outbound attempt the customer
+	// caused to fail; delivery delay after it is the customer's (decision
+	// D42).
+	CustomerMissedDeliveryAt *time.Time
+	// CollectedAtStore: the carrier stopped attempting and the customer
+	// collected the parcel at the counter, so DeliveredAt is that time and no
+	// delivery complaint applies.
+	CollectedAtStore bool
+	// Undelivered is set when the rental ended because the parcel could not
+	// be delivered.
+	Undelivered *UndeliveredEnd
 }
 
 // courier reports whether any leg uses the courier.
@@ -74,12 +85,18 @@ func (f Fulfillment) DeliveryFees(c money.Currency) money.Money {
 }
 
 // ServiceDelay is how late the outbound parcel arrived after the rental
-// start; it is credited against late-return time (decision D19).
+// start; it is credited against late-return time (decision D19). Only the
+// delay before the first attempt the customer caused to fail counts
+// (decision D42).
 func (f Fulfillment) ServiceDelay(pickupAt time.Time) time.Duration {
 	if f.Outbound.orStore() != LegCourier || f.DeliveredAt == nil {
 		return 0
 	}
-	return max(f.DeliveredAt.Sub(pickupAt), 0)
+	arrived := *f.DeliveredAt
+	if m := f.CustomerMissedDeliveryAt; m != nil && m.Before(arrived) {
+		arrived = *m
+	}
+	return max(arrived.Sub(pickupAt), 0)
 }
 
 func zeroIfUnset(m money.Money, c money.Currency) money.Money {
@@ -106,6 +123,26 @@ func (c *StoreCalendar) SetDeliveryWindows(weekly map[time.Weekday][]Slot) error
 	}
 	c.delivery = w
 	return nil
+}
+
+// DeliveryWindows lists the courier windows of an open day; a closed day has
+// none.
+func (c *StoreCalendar) DeliveryWindows(date businesstime.Date) []Slot {
+	if !date.Valid() || c.isClosed(date) {
+		return nil
+	}
+	return slices.Clone(c.delivery[date.Weekday()])
+}
+
+// DeliveryWindow is one courier window of an open day as a time range, e.g.
+// for a new shipment after the carrier stopped attempting (decision D42).
+func (c *StoreCalendar) DeliveryWindow(date businesstime.Date, id string) (period.Range, error) {
+	for _, w := range c.DeliveryWindows(date) {
+		if w.ID == id {
+			return period.New(businesstime.At(date, w.Start, c.loc), businesstime.At(date, w.End, c.loc))
+		}
+	}
+	return period.Range{}, fmt.Errorf("delivery %s window %q: %w", date, id, ErrNoDeliveryWindow)
 }
 
 // ResolveFulfillment turns the customer's date, slot or window and modes into

@@ -40,12 +40,14 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `GET /catalog/offerings` | `q, category, kind, size, color, sort, page`; trả thêm `facets`. Tìm kiếm không phân biệt dấu. Mỗi mẫu có `categories`, danh sách có thứ tự |
 | `GET /catalog/offerings/{kind}/{slug}` | Chi tiết, variant, giá theo gói, thành phần bundle |
 | `GET /store/info` | Lấy từ biến môi trường `SHOP_*` |
-| `GET /store/calendar?from&to` | Tối đa 62 ngày. `min_date` là ngày đầu tiên còn slot đặt được |
-| `GET /store/fulfillment-options` | Hiện chỉ `STORE` |
+| `GET /store/calendar?from&to&outbound` | Tối đa 62 ngày. `min_date` là ngày đầu tiên còn slot đặt được. `outbound=COURIER` trả các khung giờ giao thay cho slot quầy (thời gian thuê bắt đầu ở cuối khung); chưa nạp khu vực giao nhận thì không có khung nào |
+| `GET /store/fulfillment-options` | `STORE`, cộng `COURIER` khi đã nạp khu vực giao nhận (D43). `zones` liệt kê khu vực đang phục vụ với `wards` (`code`, `name`) và phí `outbound_fee`, `return_fee`, `redelivery_fee` |
 | `GET /policies/public` | Phần chính sách khách được xem |
 | `GET /media/{name}` | Ảnh đã tải lên, cache lâu dài vì tên ngẫu nhiên và file không đổi |
 | `POST /availability` | Kiểm tra tham khảo, có giới hạn tần suất theo IP |
 | `POST /quotes` | Báo giá đủ các khoản, có giới hạn tần suất theo IP |
+
+`POST /bookings`, `/availability`, `/quotes` nhận `address` (`recipient_name`, `phone`, `line`, `ward_code`) khi có chiều `COURIER`; thiếu thì `400`, phường ngoài khu vực thì `400 delivery.out_of_service_area`, không có ngoại lệ (D42). Tỉnh lấy theo khu vực của phường.
 
 `Quote` trả riêng tiền thuê, giảm giá, tiền giữ lịch và cách xử lý, tiền bảo đảm, phí từng chiều, `due_to_confirm` (số phải trả để giữ lịch), `due_before_handover` (tổng trước khi nhận hàng), `refundable_total`, `hold_minutes`, `policy_version`.
 
@@ -59,6 +61,7 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `GET /bookings/{id}/cancellation-preview?reason=` | own hoặc `booking.cancel_any`. Khách luôn thấy điều khoản của khách; nhân viên truyền `NO_SHOW` hoặc `STAFF_DECISION`. Chạy đúng luật hủy thật, không lưu gì. Thời gian báo trước tính đến ngày nhận sớm nhất đơn từng có, không phải `pickup_at` hiện tại |
 | `POST /bookings/{id}/cancel` | `booking.cancel_own`/`_any` |
 | `POST /bookings/{id}/reschedule` | `booking.reschedule_own`/`_any`. Không tính phí và không làm giảm phí hủy về sau |
+| `GET /bookings/{id}/deliveries` | own (`delivery.read_own`) hoặc `delivery.read_all`. Mỗi vận đơn: chiều, trạng thái, khung giờ, mã vận đơn, địa chỉ. Khách không nhận các trường xử lý nội bộ (`attempts`, `actions` rỗng). Nhân viên thấy đủ địa chỉ và SĐT người nhận theo cùng quy tắc D40, ngoài ra chỉ thấy tên, phường và 3 số cuối (D43) |
 | `GET`/`PUT /me/profile` | Đăng nhập |
 | `GET`/`POST /me/support-requests` | Đăng nhập. `booking_code` phải là đơn của chính khách |
 
@@ -89,6 +92,17 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `POST /inventory/assets/{id}/status` | Theo `actionPermissions` |
 | `POST /inventory/assets` | `inventory.manage`. `variant_id` nhận ID hoặc SKU |
 | `GET /support-requests`, `POST /support-requests/{id}/replies` | `support.handle` |
+| `GET /delivery/tasks?open&page` | `delivery.read_all`. Vận đơn theo khung giờ; `open=true` (mặc định) chỉ còn vận đơn cần xử lý. Mỗi vận đơn có `actions` (`RECORD_SHIPMENT`, `MARK_READY`, `RECORD_EVENT`, `CLASSIFY_ATTEMPT`, `CLOSE`, `RECEIVE`, `CONFIRM_CANCELLED`), `awaiting_follow_up` (hãng đã ngừng thử) và `can_collect_at_store` |
+| `POST /delivery/tasks/{id}/shipment` `{ shipment_code }` | `delivery.manage`. Chế độ thủ công (D43): nhân viên tạo vận đơn trên ứng dụng của hãng rồi nhập mã. Chiều giao chỉ khi đơn đã xác nhận |
+| `POST /delivery/tasks/{id}/ready` | `delivery.manage`. Kiện đã đóng gói |
+| `POST /delivery/tasks/{id}/events` `{ status, fault, gave_up, reason, at }` | `delivery.manage`. Chiều giao: `IN_TRANSIT`, `DELIVERED`, `DELIVERY_FAILED`; chiều về: `PICKUP_CONFIRMED`, `PICKUP_FAILED`, `IN_TRANSIT`. `DELIVERED` bắt đầu thời gian dùng của khách và có thể lùi hạn trả (kéo dài lịch giữ hàng nếu còn trống); `PICKUP_CONFIRMED` chấm dứt nghĩa vụ trả của khách. Lần thất bại có `gave_up` thì vận đơn chờ nhân viên chọn hướng xử lý (D42). `at` không được ở tương lai |
+| `POST /delivery/tasks/{id}/classify` `{ attempt_id, fault, reason }` | `delivery.manage`. `fault` là `CUSTOMER`, `STORE` hoặc `CARRIER`; phải phân loại lần thất bại cuối trước khi đóng (`409 delivery.attempt_unclassified`) |
+| `POST /delivery/tasks/{id}/close` `{ follow_up, reason, date, window_id }` | `delivery.manage`. Chỉ khi hãng đã ngừng thử. `NEW_SHIPMENT` tạo vận đơn mới miễn phí trong khung `window_id` của ngày `date`; `AT_STORE` chờ khách đến quầy; `END_BOOKING` (chiều giao) kết thúc đơn không giao được: lỗi khách giữ 70% tiền thuê và phí chiều giao, lỗi cửa hàng/hãng hoàn hết, hàng về kiểm tra |
+| `POST /delivery/tasks/{id}/collected` | `delivery.manage`. Khách nhận tại quầy kiện hãng không giao được |
+| `POST /delivery/tasks/{id}/received` | `delivery.manage`. Kiện chiều về đã đến cửa hàng: tài sản sang kiểm tra, tính phí trễ như trả tại quầy |
+| `POST /delivery/tasks/{id}/cancellation-confirmed` | `delivery.manage`. Hãng đã hủy vận đơn mà cửa hàng yêu cầu hủy khi đơn bị hủy |
+
+Đơn giao tận nơi: `POST /bookings/{id}/handover` là lúc giao kiện cho shipper và cần vận đơn chiều giao đã có mã (`409 delivery.shipment_required`). Phí giao lại: `POST /bookings/{id}/fees` với `kind: REDELIVERY`, `task_id`, `attempt_id`; số tiền lấy theo khu vực của đơn, tối đa một khoản mỗi vận đơn.
 
 ### Quản trị
 
@@ -123,7 +137,7 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | Phần | Hành vi hiện tại | Cần gì để chạy |
 |---|---|---|
 | Thanh toán trực tuyến | `online_payment_available: false`, `payment_options` rỗng. `POST /bookings/{id}/payment-sessions` và `GET /payment-sessions/{id}` trả `409 payments.gateway_unavailable`. Khách thanh toán tại quầy hoặc chuyển khoản, nhân viên ghi nhận | Chọn nhà cung cấp cổng, viết adapter và webhook (mục 4) |
-| Giao nhận tận nơi | Chỉ trả `STORE`; đặt chiều `COURIER` bị từ chối | Nối `delivery` vào `PlaceBooking`, adapter carrier, khu vực phục vụ |
+| Giao nhận tận nơi | Chạy ở chế độ thủ công (D43) khi đã nạp `config/delivery.yaml`; file hiện còn `???` (mã phường, địa chỉ cửa hàng) nên chưa bật. Chưa có webhook, chưa có khiếu nại sau khi nhận (D20) và đối soát cước | Điền cấu hình rồi chạy `cmd/policy -delivery`; adapter GHN và webhook khi có tài khoản sandbox |
 | Ưu đãi thành viên | Form không cho tạo `MEMBER_DISCOUNT` vì cần phân khúc khách | Định nghĩa phân khúc |
 
 ## 4. Thanh toán trực tuyến

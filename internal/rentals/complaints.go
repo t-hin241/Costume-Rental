@@ -103,7 +103,7 @@ func (b *Booking) RaiseDeliveryComplaint(existing []DeliveryComplaint, req Compl
 	if err := b.requireStatus(ActionComplain, StatusRented); err != nil {
 		return nil, Transition{}, err
 	}
-	if b.Fulfillment.Outbound.orStore() != LegCourier || b.Fulfillment.DeliveredAt == nil {
+	if b.Fulfillment.Outbound.orStore() != LegCourier || b.Fulfillment.DeliveredAt == nil || b.Fulfillment.CollectedAtStore {
 		return nil, Transition{}, fmt.Errorf("booking %s: %w", b.ID, ErrComplaintNotAllowed)
 	}
 	if !req.Now.Before(b.Fulfillment.DeliveredAt.Add(b.Policy.Delivery.ComplaintWindow)) {

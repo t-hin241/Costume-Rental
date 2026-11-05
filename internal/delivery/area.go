@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"webee_rentor/internal/domainerr"
@@ -30,18 +31,23 @@ type Address struct {
 	Phone         string
 	Line          string // street and house number
 	WardCode      string
-	DistrictCode  string
-	ProvinceCode  string
+	// DistrictCode is optional: since 2025-07 the carrier addresses by
+	// province and ward only.
+	DistrictCode string
+	ProvinceCode string
 }
 
 const maxAddressField = 200
 
 // Validate checks the address is complete.
 func (a Address) Validate() error {
-	for _, f := range []string{a.RecipientName, a.Phone, a.Line, a.WardCode, a.DistrictCode, a.ProvinceCode} {
+	for _, f := range []string{a.RecipientName, a.Phone, a.Line, a.WardCode, a.ProvinceCode} {
 		if strings.TrimSpace(f) == "" || utf8.RuneCountInString(f) > maxAddressField {
 			return ErrInvalidAddress
 		}
+	}
+	if utf8.RuneCountInString(a.DistrictCode) > maxAddressField {
+		return ErrInvalidAddress
 	}
 	digits := 0
 	for _, r := range a.Phone {
@@ -69,19 +75,49 @@ func (a Address) Masked() string {
 	return fmt.Sprintf("***%s / %s-%s-%s", tail, a.WardCode, a.DistrictCode, a.ProvinceCode)
 }
 
+// ForStaffAfterContact is what staff see once they no longer need to reach
+// the customer (decision D40, applied to addresses by D43): the recipient
+// name and the ward stay, the street line goes and the phone keeps its last 3
+// digits.
+func (a Address) ForStaffAfterContact() Address {
+	out := Address{RecipientName: a.RecipientName, WardCode: a.WardCode, DistrictCode: a.DistrictCode, ProvinceCode: a.ProvinceCode}
+	var digits []rune
+	for _, r := range a.Phone {
+		if r >= '0' && r <= '9' {
+			digits = append(digits, r)
+		}
+	}
+	if len(digits) > 3 {
+		digits = digits[len(digits)-3:]
+	}
+	out.Phone = "***" + string(digits)
+	return out
+}
+
 // Zone is a part of the service area with its fixed customer fees (owner
 // decision: fixed fee table by area, not the carrier quote).
 type Zone struct {
-	ID            string
-	Name          string
-	ProvinceCode  string
+	ID           string
+	Name         string
+	ProvinceCode string
+	// DistrictCodes and Wards, when set, restrict the zone; a zone needs at
+	// least one of them.
 	DistrictCodes []string
-	// WardCodes, when set, restricts the zone to those wards.
-	WardCodes     []string
+	Wards         []Ward
 	OutboundFee   money.Money
 	ReturnFee     money.Money
 	RedeliveryFee money.Money
 	Active        bool
+}
+
+// Ward is a carrier ward code with the name customers pick from.
+type Ward struct {
+	Code string
+	Name string
+}
+
+func (z Zone) hasWard(code string) bool {
+	return slices.ContainsFunc(z.Wards, func(w Ward) bool { return w.Code == code })
 }
 
 // ServiceArea is the single operating area of the MVP, served by one carrier
@@ -90,6 +126,16 @@ type ServiceArea struct {
 	ProviderCode string
 	Zones        []Zone
 	Version      string
+	// FeeTolerance is how far the carrier's final cost may differ from the
+	// estimate before staff review it; the store absorbs the rest.
+	FeeTolerance money.Money
+	// ReturnShipmentLead is how long before due_at the return pickup is
+	// arranged with the carrier.
+	ReturnShipmentLead time.Duration
+	// Origin is the store address parcels leave from and come back to.
+	Origin Address
+	// ParcelWeightGram is the default parcel weight declared to the carrier.
+	ParcelWeightGram int
 }
 
 // Validate checks the fee table.
@@ -99,8 +145,13 @@ func (s ServiceArea) Validate() error {
 	}
 	ids := map[string]bool{}
 	for _, z := range s.Zones {
-		if z.ID == "" || ids[z.ID] || z.ProvinceCode == "" || len(z.DistrictCodes) == 0 {
-			return domainerr.Invalid("service_area.zones", "zones need a unique id, a province and districts")
+		if z.ID == "" || ids[z.ID] || z.ProvinceCode == "" || (len(z.DistrictCodes) == 0 && len(z.Wards) == 0) {
+			return domainerr.Invalid("service_area.zones", "zones need a unique id, a province and districts or wards")
+		}
+		for _, w := range z.Wards {
+			if strings.TrimSpace(w.Code) == "" || strings.TrimSpace(w.Name) == "" {
+				return domainerr.Invalid("service_area.zones", fmt.Sprintf("zone %s wards need a code and a name", z.ID))
+			}
 		}
 		ids[z.ID] = true
 		for _, m := range []money.Money{z.OutboundFee, z.ReturnFee, z.RedeliveryFee} {
@@ -109,20 +160,45 @@ func (s ServiceArea) Validate() error {
 			}
 		}
 	}
+	if s.FeeTolerance.Currency().Valid() && s.FeeTolerance.IsNegative() || s.ReturnShipmentLead < 0 {
+		return domainerr.Invalid("service_area", "fee tolerance and return shipment lead must not be negative")
+	}
+	if len(s.Zones) > 0 {
+		if err := s.Origin.Validate(); err != nil {
+			return fmt.Errorf("service area origin: %w", err)
+		}
+		if s.ParcelWeightGram < 1 {
+			return domainerr.Invalid("service_area", "a default parcel weight is required")
+		}
+	}
 	return nil
 }
 
-// Resolve finds the active zone serving an address; outside the area the
-// customer is told before booking (or staff approve manually).
+// ZoneOfWard finds the active zone listing a ward; customers pick a ward and
+// the province comes from its zone.
+func (s ServiceArea) ZoneOfWard(code string) (Zone, bool) {
+	for _, z := range s.Zones {
+		if z.Active && z.hasWard(code) {
+			return z, true
+		}
+	}
+	return Zone{}, false
+}
+
+// Resolve finds the active zone serving an address. An address outside the
+// area is refused before booking, with no manual exception (decision D42).
 func (s ServiceArea) Resolve(a Address) (Zone, error) {
 	if err := a.Validate(); err != nil {
 		return Zone{}, err
 	}
 	for _, z := range s.Zones {
-		if !z.Active || z.ProvinceCode != a.ProvinceCode || !slices.Contains(z.DistrictCodes, a.DistrictCode) {
+		if !z.Active || z.ProvinceCode != a.ProvinceCode {
 			continue
 		}
-		if len(z.WardCodes) > 0 && !slices.Contains(z.WardCodes, a.WardCode) {
+		if len(z.DistrictCodes) > 0 && !slices.Contains(z.DistrictCodes, a.DistrictCode) {
+			continue
+		}
+		if len(z.Wards) > 0 && !z.hasWard(a.WardCode) {
 			continue
 		}
 		return z, nil

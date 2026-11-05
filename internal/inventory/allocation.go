@@ -111,6 +111,41 @@ func (a *Allocation) Reblock(block period.Range) error {
 	return nil
 }
 
+// Extend moves the end of an in-use allocation later when the asset has to
+// stay out longer than booked, e.g. a late courier delivery moved the due time
+// (decision D42). When another active allocation of the asset overlaps the
+// extra time nothing changes and those allocations are returned, to be handled
+// like a late return (OverdueConflicts). The asset is never double-allocated
+// either way: an in-use asset blocks every later range until it is back.
+// others must be read under the asset lock.
+func (a *Allocation) Extend(end time.Time, others []Allocation) ([]Allocation, error) {
+	if a.Status != AllocationActive || a.Tentative() || !a.InUse() {
+		return nil, fmt.Errorf("allocation %s: %w", a.ID, ErrAllocationNotActive)
+	}
+	if !end.After(a.Block.End()) {
+		return nil, nil
+	}
+	extra, err := period.New(a.Block.End(), end)
+	if err != nil {
+		return nil, err
+	}
+	var conflicts []Allocation
+	for _, o := range others {
+		if o.ID != a.ID && o.AssetID == a.AssetID && o.Status == AllocationActive && o.Block.Overlaps(extra) {
+			conflicts = append(conflicts, o)
+		}
+	}
+	if len(conflicts) > 0 {
+		return conflicts, nil
+	}
+	block, err := period.New(a.Block.Start(), end)
+	if err != nil {
+		return nil, err
+	}
+	a.Block = block
+	return nil, nil
+}
+
 // InUse reports whether the asset is with the customer under this allocation.
 func (a Allocation) InUse() bool {
 	return a.HandedOverAt != nil && a.ReturnedAt == nil
