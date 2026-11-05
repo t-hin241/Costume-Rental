@@ -1,0 +1,139 @@
+# Local stack for trying the whole site in a browser: http://localhost:3000.
+# Not a production setup: plain HTTP, and every email is caught by Mailpit.
+# Setup steps are in README.md.
+#
+# Compose reads .env by itself to fill the ${...} below. Each container gets
+# only the variables listed here: .env also serves `go run` on the host, so its
+# localhost addresses must not reach a container, and the application must not
+# see the Postgres superuser password.
+name: webee-rentor
+
+x-api: &api
+  image: webee-rentor-api:local
+  environment: &database
+    DATABASE_URL: postgres://webee:${WEBEE_DB_PASSWORD:?set it in .env}@postgres:5432/webee_rentor?sslmode=disable
+  networks: [webee]
+
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env}
+      WEBEE_DB_PASSWORD: ${WEBEE_DB_PASSWORD:?set it in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    healthcheck:
+      # TCP on purpose: while the image initialises, its temporary server
+      # listens on the socket only, so this cannot pass before the role exists.
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, webee, -d, webee_rentor]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks: [webee]
+
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    ports:
+      - 127.0.0.1:8025:8025
+    networks: [webee]
+
+  migrate:
+    <<: *api
+    command: [/app/migrate]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Run by hand (docker compose run --rm policy), never on `up`: the command
+  # activates the version in the file, which would silently replace a policy
+  # published from the admin screens.
+  policy:
+    <<: *api
+    profiles: [tools]
+    command: [/app/policy, -file, /config/policy.yaml]
+    volumes:
+      - type: bind
+        source: ./config/policy.yaml
+        target: /config/policy.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  bootstrap-admin:
+    <<: *api
+    profiles: [tools]
+    entrypoint: [/app/bootstrap-admin]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    <<: *api
+    build:
+      context: .
+      target: api
+    environment:
+      <<: *database
+      AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:?set it in .env}
+      HTTP_COOKIE_SECURE: "false"
+      HTTP_TRUSTED_PROXIES: 172.30.77.10
+      APP_BASE_URL: http://localhost:3000
+      MEDIA_DIR: /data/media
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_TLS: none
+      SMTP_FROM: no-reply@example.test
+      SHOP_NAME: ${SHOP_NAME:-Webee Rental}
+      SHOP_ADDRESS: ${SHOP_ADDRESS:-}
+      SHOP_PHONE: ${SHOP_PHONE:-}
+      SHOP_EMAIL: ${SHOP_EMAIL:-}
+      SHOP_HOURS: ${SHOP_HOURS:-}
+      SHOP_PAYMENT_INSTRUCTIONS: ${SHOP_PAYMENT_INSTRUCTIONS:-}
+    volumes:
+      - media-data:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/readyz]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    # Longer than the server's own 20s graceful shutdown.
+    stop_grace_period: 25s
+
+  web:
+    image: webee-rentor-web:local
+    build:
+      context: .
+      target: web
+    ports:
+      - 127.0.0.1:3000:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      webee:
+        # Fixed so HTTP_TRUSTED_PROXIES can name this proxy and nothing else.
+        ipv4_address: 172.30.77.10
+
+volumes:
+  postgres-data:
+  media-data:
+
+networks:
+  webee:
+    ipam:
+      config:
+        - subnet: 172.30.77.0/24

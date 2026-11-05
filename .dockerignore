@@ -1,0 +1,14 @@
+# Allowlist: anything not named here (.env files, config/, docs/, .git) stays
+# out of the build context and so out of the image layers.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!deploy/nginx/
+!web/
+
+**/*_test.go
+web/node_modules
+web/dist
+web/*.tsbuildinfo

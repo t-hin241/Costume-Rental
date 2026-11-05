@@ -4,6 +4,9 @@
 *.test
 *.out
 coverage.*
+data_scrape/
+# Uploaded images in local development (MEDIA_DIR)
+/data/
 
 # Local environment and secrets (commit only .env.example with fake values)
 .env
@@ -20,3 +23,4 @@ Thumbs.db
 #documents
 docs/
 AGENTS.md
+restore_key.md
