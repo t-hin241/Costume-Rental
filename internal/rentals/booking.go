@@ -134,6 +134,10 @@ type Booking struct {
 	Package    PackageSnapshot
 	Lines      []Line
 	Currency   money.Currency
+	// EarliestPickupAt is the earliest pickup the booking ever had. Cancellation
+	// notice counts from it, so moving the date cannot lower the fee (decision
+	// D34).
+	EarliestPickupAt time.Time
 	// GrossRentTotal and DiscountTotal explain RentTotal, the commercial
 	// rent after discounts that the ledger charges.
 	GrossRentTotal money.Money
@@ -240,11 +244,11 @@ type CancellationFee struct {
 }
 
 // CancellationFee applies the snapshot cancellation policy (D8): a share of
-// the rent by notice before pickup_at, the no-show rate, or the store-cancel
-// rate. The security deposit is never part of the base. An expired hold or a
-// cancellation for failed payment never secured the date and costs nothing
-// (owner decision D16); nor does a booking cancelled before it was confirmed
-// with no money received (owner decision D26).
+// the rent by notice before EarliestPickupAt, the no-show rate, or the
+// store-cancel rate. The security deposit is never part of the base. An expired
+// hold or a cancellation for failed payment never secured the date and costs
+// nothing (owner decision D16); nor does a booking cancelled before it was
+// confirmed with no money received (owner decision D26).
 func (b *Booking) CancellationFee(moneyReceived bool) (CancellationFee, error) {
 	c := b.Policy.Cancellation
 	var pct int
@@ -263,7 +267,7 @@ func (b *Booking) CancellationFee(moneyReceived bool) (CancellationFee, error) {
 	case b.CancelReason == CancelStaffDecision:
 		pct, basis = c.StoreCancelFeePercent, "store cancelled"
 	case b.CancelReason == CancelCustomerRequest:
-		notice := b.Schedule.PickupAt.Sub(*b.CancelledAt)
+		notice := b.EarliestPickupAt.Sub(*b.CancelledAt)
 		tier := c.tierFor(notice)
 		pct, basis = tier.FeePercent, fmt.Sprintf("customer cancelled %s before pickup (tier >= %s)", notice, tier.MinNotice)
 	default:

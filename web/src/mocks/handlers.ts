@@ -255,7 +255,7 @@ function placeBooking(input: BookingInput, customerId: string): MockBooking {
   });
   const now = new Date().toISOString();
   const b: MockBooking = {
-    id: `b-${code}`, code, customer_id: customerId, status: 'PENDING_CONFIRMATION', pickup_at: new Date(pickup).toISOString(), due_at: new Date(due).toISOString(), outbound: input.outbound, return: input.return,
+    id: `b-${code}`, code, customer_id: customerId, status: 'PENDING_CONFIRMATION', pickup_at: new Date(pickup).toISOString(), earliest_pickup_at: new Date(pickup).toISOString(), due_at: new Date(due).toISOString(), outbound: input.outbound, return: input.return,
     package_label: pkg.label, hold_expires_at: new Date(Date.now() + db.policy.booking.hold_minutes * 60_000).toISOString(), created_at: now, handed_over_at: null, returned_at: null,
     lines: priced.map((l, i) => ({ id: `L${i + 1}`, kind: l.kind, name: l.name, image: l.image, selection: l.selection, quantity: l.quantity, list_rent: vnd(l.rent), discount: vnd(0), rent: vnd(l.rent), security: vnd(l.security) })),
     items, transitions: [{ action: 'booking.create', to: 'PENDING_CONFIRMATION', at: now, actor: 'Khách hàng', note: '' }],
@@ -291,7 +291,7 @@ function sessionView({ idempotency_key: _key, outcome: _outcome, resolve_at: _at
 
 function cancellationFee(b: MockBooking) {
   const rent = financeOf(b).rent_total.amount;
-  const notice = (new Date(b.pickup_at).getTime() - Date.now()) / hour;
+  const notice = (new Date(b.earliest_pickup_at).getTime() - Date.now()) / hour;
   const tiers = [...db.policy.cancellation.tiers].sort((x, y) => y.min_notice_hours - x.min_notice_hours);
   const percent = tiers.find((t) => notice >= t.min_notice_hours)?.fee_percent ?? tiers.at(-1)?.fee_percent ?? 0;
   const fee = Math.floor(rent * (percent / 100));
@@ -491,6 +491,7 @@ export const handlers: HttpHandler[] = [
       if (!freeAssets(assetOf(i.asset_id).variant_id, pickup, due, ctx.b.id).length) throw new Refused(409, 'inventory.insufficient');
     }
     ctx.b.pickup_at = new Date(pickup).toISOString();
+    ctx.b.earliest_pickup_at = new Date(Math.min(pickup, new Date(ctx.b.earliest_pickup_at).getTime())).toISOString();
     ctx.b.due_at = new Date(due).toISOString();
     ctx.b.transitions.push({ action: 'booking.reschedule', to: ctx.b.status, at: new Date().toISOString(), actor: ctx.user.full_name, note: '' });
     return json(detailOf(ctx.b, ctx.can, ctx.own));

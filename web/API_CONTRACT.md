@@ -55,9 +55,9 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `POST /bookings` (bắt buộc `request_key`) | `booking.create_own` |
 | `GET /me/bookings?scope=active\|history` | `booking.read_own` |
 | `GET /bookings/{id}` | own hoặc `booking.read_all` |
-| `GET /bookings/{id}/cancellation-preview?reason=` | own hoặc `booking.cancel_any`. Khách luôn thấy điều khoản của khách; nhân viên truyền `NO_SHOW` hoặc `STAFF_DECISION`. Chạy đúng luật hủy thật, không lưu gì |
+| `GET /bookings/{id}/cancellation-preview?reason=` | own hoặc `booking.cancel_any`. Khách luôn thấy điều khoản của khách; nhân viên truyền `NO_SHOW` hoặc `STAFF_DECISION`. Chạy đúng luật hủy thật, không lưu gì. Thời gian báo trước tính đến ngày nhận sớm nhất đơn từng có, không phải `pickup_at` hiện tại |
 | `POST /bookings/{id}/cancel` | `booking.cancel_own`/`_any` |
-| `POST /bookings/{id}/reschedule` | `booking.reschedule_own`/`_any` |
+| `POST /bookings/{id}/reschedule` | `booking.reschedule_own`/`_any`. Không tính phí và không làm giảm phí hủy về sau |
 | `GET`/`PUT /me/profile` | Đăng nhập |
 | `GET`/`POST /me/support-requests` | Đăng nhập. `booking_code` phải là đơn của chính khách |
 

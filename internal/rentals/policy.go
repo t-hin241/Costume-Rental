@@ -138,7 +138,8 @@ func (p ReservationPolicy) validate() error {
 }
 
 // FeeTier charges FeePercent of the rent when a customer-requested
-// cancellation happens at least MinNotice before pickup_at.
+// cancellation happens at least MinNotice before the earliest pickup the
+// booking had (decision D34).
 type FeeTier struct {
 	MinNotice  time.Duration
 	FeePercent int

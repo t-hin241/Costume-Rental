@@ -39,9 +39,9 @@ const insertBooking = `
 				open_modification_id, confirmed_modification_ids, self_service_size_changes,
 				created_at, hold_expires_at, confirmed_at, preparation_started_at, handed_over_at, returned_at,
 				inspection_completed_at, completed_at, cancelled_at, expired_at, cancel_reason, cancel_note,
-				updated_at, version)
+				updated_at, earliest_pickup_at, version)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-				$21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, 1)`
+				$21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40, 1)`
 
 // SaveBooking inserts (version 0) or updates the booking and its children,
 // returning the new version. requestKey is only used on insert.
@@ -75,7 +75,7 @@ func SaveBooking(ctx context.Context, q postgres.Querier, b *rentals.Booking, v 
 			openMod, modIDs(b.Modifications), b.SelfServiceSizeChanges,
 			b.CreatedAt, b.HoldExpiresAt, b.ConfirmedAt, b.PreparationStartedAt, b.HandedOverAt, b.ReturnedAt,
 			b.InspectionCompletedAt, b.CompletedAt, b.CancelledAt, b.ExpiredAt, cancelReason, b.CancelNote,
-			now.UTC())
+			now.UTC(), b.EarliestPickupAt)
 		if postgres.IsUniqueViolation(err, requestKeyIndex) {
 			return 0, fmt.Errorf("booking request key: %w", postgres.ErrDuplicate)
 		}
@@ -92,7 +92,7 @@ func SaveBooking(ctx context.Context, q postgres.Querier, b *rentals.Booking, v 
 				confirmed_modification_ids = $21, self_service_size_changes = $22, hold_expires_at = $23,
 				confirmed_at = $24, preparation_started_at = $25, handed_over_at = $26, returned_at = $27,
 				inspection_completed_at = $28, completed_at = $29, cancelled_at = $30, expired_at = $31,
-				cancel_reason = $32, cancel_note = $33, updated_at = $34, version = version + 1
+				cancel_reason = $32, cancel_note = $33, updated_at = $34, earliest_pickup_at = $36, version = version + 1
 			WHERE id = $1 AND version = $35`,
 			b.ID, b.Status, b.Schedule.PickupAt, b.Schedule.DueAt,
 			b.Package.ID, b.Package.Code, b.Package.Label, int(b.Package.Duration/time.Hour),
@@ -102,7 +102,7 @@ func SaveBooking(ctx context.Context, q postgres.Querier, b *rentals.Booking, v 
 			openMod, modIDs(b.Modifications), b.SelfServiceSizeChanges, b.HoldExpiresAt,
 			b.ConfirmedAt, b.PreparationStartedAt, b.HandedOverAt, b.ReturnedAt,
 			b.InspectionCompletedAt, b.CompletedAt, b.CancelledAt, b.ExpiredAt, cancelReason, b.CancelNote,
-			now.UTC(), int(v))
+			now.UTC(), int(v), b.EarliestPickupAt)
 		if err != nil {
 			return 0, fmt.Errorf("update booking %s: %w", b.ID, err)
 		}
@@ -253,7 +253,7 @@ func saveItems(ctx context.Context, q postgres.Querier, b *rentals.Booking) erro
 // LoadBooking reads a booking. With lock it is read FOR UPDATE, which every
 // use case that changes the booking must do.
 func LoadBooking(ctx context.Context, q postgres.Querier, id rentals.BookingID, lock bool) (*rentals.Booking, Version, error) {
-	query := `SELECT id, code, customer_id, status, currency, pickup_at, due_at,
+	query := `SELECT id, code, customer_id, status, currency, pickup_at, due_at, earliest_pickup_at,
 		package_id, package_code, package_label, package_duration_hours,
 		gross_rent_total, discount_total, rent_total, security_deposit_total, reservation_deposit,
 		policy, fulfillment, discounts, manual_adjustments, service_credits,
@@ -270,7 +270,7 @@ func LoadBooking(ctx context.Context, q postgres.Querier, id rentals.BookingID, 
 	var policy, fulfillment, discounts, manual, credits []byte
 	var mods []string
 	err := q.QueryRow(ctx, query, id).Scan(&b.ID, &b.Code, &b.CustomerID, &b.Status, &b.Currency,
-		&b.Schedule.PickupAt, &b.Schedule.DueAt, &b.Package.ID, &b.Package.Code, &b.Package.Label, &hours,
+		&b.Schedule.PickupAt, &b.Schedule.DueAt, &b.EarliestPickupAt, &b.Package.ID, &b.Package.Code, &b.Package.Label, &hours,
 		&gross, &discount, &rent, &security, &reservation,
 		&policy, &fulfillment, &discounts, &manual, &credits,
 		&b.OpenModification, &mods, &b.SelfServiceSizeChanges,
@@ -281,6 +281,7 @@ func LoadBooking(ctx context.Context, q postgres.Querier, id rentals.BookingID, 
 	}
 	b.Package.Duration = time.Duration(hours) * time.Hour
 	b.Schedule.PickupAt, b.Schedule.DueAt = b.Schedule.PickupAt.UTC(), b.Schedule.DueAt.UTC()
+	b.EarliestPickupAt = b.EarliestPickupAt.UTC()
 	b.CreatedAt, b.HoldExpiresAt = b.CreatedAt.UTC(), b.HoldExpiresAt.UTC()
 	for _, p := range []**time.Time{&b.ConfirmedAt, &b.PreparationStartedAt, &b.HandedOverAt, &b.ReturnedAt,
 		&b.InspectionCompletedAt, &b.CompletedAt, &b.CancelledAt, &b.ExpiredAt} {

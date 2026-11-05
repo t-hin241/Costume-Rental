@@ -191,9 +191,9 @@ func Quote(req PlaceRequest) (*Booking, error) {
 	b := &Booking{
 		ID: req.BookingID, Code: req.Code, CustomerID: req.CustomerID,
 		Status:   StatusPendingConfirmation,
-		Schedule: req.Schedule,
-		Package:  PackageSnapshot{ID: pkg.ID, Code: pkg.Code, Label: pkg.Label, Duration: pkg.Duration},
-		Lines:    lines, Currency: currency, Fulfillment: fulfillment,
+		Schedule: req.Schedule, EarliestPickupAt: req.Schedule.PickupAt,
+		Package: PackageSnapshot{ID: pkg.ID, Code: pkg.Code, Label: pkg.Label, Duration: pkg.Duration},
+		Lines:   lines, Currency: currency, Fulfillment: fulfillment,
 		GrossRentTotal: grossTotal, DiscountTotal: mustSub(grossTotal, rentTotal),
 		RentTotal: rentTotal, SecurityDepositTotal: depositTotal, ReservationDeposit: reservation,
 		Policy:        req.Policy.clone(),
@@ -314,6 +314,9 @@ func (b *Booking) Reschedule(req RescheduleRequest) (Rescheduling, error) {
 	}
 	old := b.Schedule
 	b.Schedule, b.Fulfillment = req.Schedule, nf
+	if req.Schedule.PickupAt.Before(b.EarliestPickupAt) {
+		b.EarliestPickupAt = req.Schedule.PickupAt
+	}
 	t := Transition{
 		BookingID: b.ID, Action: ActionReschedule, From: b.Status, To: b.Status, Actor: req.Actor, At: req.Now.UTC(),
 		Reason: fmt.Sprintf("from %s–%s", old.PickupAt.Format(time.RFC3339), old.DueAt.Format(time.RFC3339)),

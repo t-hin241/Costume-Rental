@@ -42,6 +42,7 @@ export default function Policies() {
               <DefinitionList items={[
                 ...cancellationRows(p),
                 { label: `Không đến nhận sau ${formatHours(p.cancellation.no_show_after_hours)}`, value: `${p.cancellation.no_show_fee_percent}% tiền thuê` },
+                { label: 'Đơn đã đổi lịch', value: 'Phí tính theo ngày nhận sớm nhất của đơn' },
               ]} />
             </Card>
             <Card title="Trả trễ">

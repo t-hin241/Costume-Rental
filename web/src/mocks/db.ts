@@ -56,6 +56,7 @@ export interface MockBooking {
   customer_id: string;
   status: BookingStatus;
   pickup_at: string;
+  earliest_pickup_at: string;
   due_at: string;
   outbound: LegMode;
   return: LegMode;
@@ -241,7 +242,7 @@ function seed(): MockDb {
     const createdAt = Math.min(pickup - 72 * hour, now - 3 * hour);
     const b: MockBooking = {
       id: `b-${code}`, code, outbound: 'STORE', return: 'STORE', package_label: pkg.label, hold_expires_at: null, created_at: iso(createdAt), handed_over_at: null, returned_at: null,
-      pickup_at: iso(pickup), due_at: iso(pickup + pkg.duration_hours * hour),
+      pickup_at: iso(pickup), earliest_pickup_at: iso(pickup), due_at: iso(pickup + pkg.duration_hours * hour),
       lines: [{ id: 'L1', kind: 'ITEM', name: it.name, image: it.images[0] ?? null, selection: `Size ${variant.size}`, quantity: 1, list_rent: vnd(rent), discount: vnd(0), rent: vnd(rent), security: vnd(deposit) }],
       items: [{ asset_id: asset.id, asset_code: asset.code, asset_status: asset.status, line_id: 'L1', name: it.name, variant_label: `${variant.size} · ${variant.color}`, state: 'ALLOCATED', preexisting_issues: '', returned_at: null, conditions: [], inspection_notes: '' }],
       transitions: [{ action: 'booking.create', to: 'PENDING_CONFIRMATION', at: iso(createdAt), actor: 'Khách hàng', note: '' }],

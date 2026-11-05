@@ -20,11 +20,11 @@ func TestMain(m *testing.M) { pgtest.Main(m, nil) }
 func insertBooking(t *testing.T, f *pgtest.Fixture, id string, customer identity.Principal) {
 	t.Helper()
 	_, err := f.Pool.Exec(context.Background(), `
-		INSERT INTO bookings (id, code, customer_id, status, currency, pickup_at, due_at, package_id, package_code,
+		INSERT INTO bookings (id, code, customer_id, status, currency, pickup_at, earliest_pickup_at, due_at, package_id, package_code,
 			package_label, package_duration_hours, gross_rent_total, discount_total, rent_total,
 			security_deposit_total, reservation_deposit, policy_version, policy, fulfillment, created_at,
 			hold_expires_at, updated_at)
-		VALUES ($1, $1, $2, 'PENDING_CONFIRMATION', 'VND', $3, $3::timestamptz + interval '1 day', 'p', 'P', 'P', 24,
+		VALUES ($1, $1, $2, 'PENDING_CONFIRMATION', 'VND', $3, $3, $3::timestamptz + interval '1 day', 'p', 'P', 'P', 24,
 			0, 0, 0, 0, 0, 'v', '{}', '{}', $3, $3, $3)`, id, customer.UserID, pgtest.Now)
 	if err != nil {
 		t.Fatal(err)

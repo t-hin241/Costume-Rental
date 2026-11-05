@@ -116,6 +116,61 @@ func TestPaymentFailedOnlyAppliesToUnconfirmedHolds(t *testing.T) {
 	}
 }
 
+// D34: notice counts from the earliest pickup the booking had, so moving the
+// date either way cannot lower the fee. Booked for 2026-11-10 and cancelled
+// from 2026-11-01 unless a case says otherwise.
+func TestMovingTheDateCannotLowerTheCancellationFee(t *testing.T) {
+	cases := []struct {
+		name     string
+		moves    []string
+		cancelAt time.Time
+		percent  int
+	}{
+		{"not moved", nil, now, 0},
+		{"moved later, cancelled 2 days before the first date", []string{"2026-11-24"}, now.Add(7 * day), 30},
+		{"moved later, cancelled after the first date", []string{"2026-11-24"}, now.Add(10 * day), 50},
+		{"moved sooner", []string{"2026-11-03"}, now, 30},
+		{"moved sooner, then far away", []string{"2026-11-03", "2026-11-25"}, now, 30},
+		{"moved later, then back to the first date", []string{"2026-11-24", "2026-11-10"}, now, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b := mustPlace(t).Booking
+			for _, to := range c.moves {
+				if _, err := b.Reschedule(rentals.RescheduleRequest{
+					Actor: identity.UserActor(customer), Scope: identity.ScopeOwn, Calendar: calendar(t),
+					Schedule:  schedule(t, to, "morning", 3*day),
+					Inventory: rentals.InventoryView{Assets: readyAssets()}, Now: now,
+				}); err != nil {
+					t.Fatalf("move to %s: %v", to, err)
+				}
+			}
+			if _, err := b.Cancel(rentals.CancelRequest{Actor: identity.UserActor(customer), Scope: identity.ScopeOwn,
+				Reason: rentals.CancelCustomerRequest, Now: c.cancelAt}); err != nil {
+				t.Fatal(err)
+			}
+			fee, err := b.CancellationFee(true)
+			if err != nil || fee.FeePercent != c.percent {
+				t.Fatalf("fee = %+v, %v; want %d%%", fee, err, c.percent)
+			}
+		})
+	}
+}
+
+// A refused move changes nothing, including the date the fee counts from.
+func TestARefusedMoveKeepsTheEarliestPickup(t *testing.T) {
+	b := mustPlace(t).Booking
+	first := b.EarliestPickupAt
+	_, err := b.Reschedule(rentals.RescheduleRequest{
+		Actor: identity.UserActor(customer), Scope: identity.ScopeOwn, Calendar: calendar(t),
+		Schedule:  schedule(t, "2026-11-03", "morning", day),
+		Inventory: rentals.InventoryView{Assets: readyAssets()}, Now: now,
+	})
+	if !errors.Is(err, rentals.ErrDurationMismatch) || !b.EarliestPickupAt.Equal(first) {
+		t.Fatalf("err = %v, earliest = %s, want %s", err, b.EarliestPickupAt, first)
+	}
+}
+
 func TestCancellationFeeIsOnRentOnlyAndRoundsDown(t *testing.T) {
 	q := bundleQuote(t, pkg3)
 	q.RentAmount = vnd(200_005)

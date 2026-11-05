@@ -53,3 +53,41 @@ func TestUnpaidHoldsAreLimitedForEachCustomer(t *testing.T) {
 	s.act(s.money, "/bookings/"+first.ID+"/payments", pay("p1", "CASH", map[string]int64{"RESERVATION": 15_000}))
 	s.place(s.customer, "k2", "")
 }
+
+// Rent 50,000đ, so 30% is 15,000đ, covered by the reservation deposit paid.
+func TestAMovedBookingIsChargedThePreviewedFee(t *testing.T) {
+	cases := []struct {
+		name   string
+		booked string
+		moves  []string
+		fee    int64
+	}{
+		{"two days away, moved far away", "2026-11-03", []string{"2026-11-24"}, 15_000},
+		{"far away, moved close, moved far away again", "2026-11-24", []string{"2026-11-03", "2026-11-25"}, 15_000},
+		{"far away and never moved", "2026-11-24", nil, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newShop(t)
+			s.f.Assets(s.c.JacketM, 1)
+			b := decode[detailBody](t, s.send(s.customer, "POST", "/bookings", s.order(s.c.JacketM, c.booked, "k1", ""), http.StatusCreated))
+			path := "/bookings/" + b.ID
+			s.act(s.money, path+"/payments", pay("p1", "CASH", map[string]int64{"RESERVATION": 15_000}))
+			s.act(s.staff, path+"/confirm", "")
+			for _, to := range c.moves {
+				s.act(s.customer, path+"/reschedule", fmt.Sprintf(`{"pickup_date":%q,"slot_id":"morning"}`, to))
+			}
+
+			preview := decode[struct {
+				Fee moneyBody `json:"fee"`
+			}](t, s.send(s.customer, "GET", path+"/cancellation-preview", "", http.StatusOK))
+			if preview.Fee.Amount != c.fee {
+				t.Fatalf("preview fee = %d, want %d", preview.Fee.Amount, c.fee)
+			}
+			got := s.act(s.customer, path+"/cancel", `{"reason":"CUSTOMER_REQUEST","note":"Đổi kế hoạch"}`)
+			if want := 15_000 - c.fee; got.Finance.RefundPending.Amount != want {
+				t.Fatalf("refund pending = %d, want %d", got.Finance.RefundPending.Amount, want)
+			}
+		})
+	}
+}

@@ -105,7 +105,7 @@ function RescheduleDialog({ booking, onClose }: { booking: BookingDetail; onClos
   return (
     <Modal open title="Đổi lịch thuê" onClose={onClose}>
       <div className="stack">
-        <p className="small muted">Giữ nguyên gói thuê. Nếu lịch mới không còn hàng, đơn giữ nguyên lịch cũ.</p>
+        <p className="small muted">Giữ nguyên gói thuê. Nếu lịch mới không còn hàng, đơn giữ nguyên lịch cũ. Phí hủy vẫn tính theo ngày nhận sớm nhất của đơn, nên dời lịch không làm giảm phí.</p>
         <StoreCalendarPicker value={date} onChange={(d) => { setDate(d); setSlot(undefined); }} />
         {date && (
           <div className="chip-group" role="radiogroup" aria-label="Khung giờ nhận">
