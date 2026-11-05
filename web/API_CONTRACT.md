@@ -96,6 +96,8 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 |---|---|
 | `GET /admin/dashboard?range_days=` | `revenue.read` hoặc `policy.manage` |
 | `GET /admin/users?q&role&page` | `user.role_manage` |
+| `GET /admin/profile-retention?page&page_size` | `customer.profile_erase`. Hồ sơ khách của tài khoản không hoạt động 24 tháng, cũ nhất trước, kèm `blockers` (`OPEN_BOOKING`, `MONEY_OPEN`, `OPEN_FEE`, `OPEN_SUPPORT`); rỗng thì xóa được (D39) |
+| `POST /admin/users/{id}/profile-erase` (bắt buộc `reason`) | `customer.profile_erase`. Xóa họ tên và SĐT, trả `204`; còn `blockers` hoặc chưa đủ 24 tháng trả `409 retention.profile_kept`; không có hồ sơ trả `404` |
 | `GET /admin/audit-events?q&result&page` | `audit.read` |
 | `GET`/`POST`/`PUT /admin/catalog/items`, `/bundles` | `catalog.manage`. `category_ids` là danh sách có thứ tự, tối đa 10, danh mục đầu tiên hiện trên thẻ sản phẩm |
 | `POST /admin/media/images` | `catalog.manage`, 300 lần/giờ/người. Body là chính file ảnh (không multipart). Trả `201 { url, content_type, size }`; đưa `url` vào `images` của món hoặc bộ. Nội dung file quyết định định dạng: chỉ nhận JPEG, PNG, WebP, lỗi `media.unsupported_image`; quá `MEDIA_MAX_BYTES` hoặc quá 50 triệu điểm ảnh trả `media.file_too_large`. Ảnh tải lên nhưng không được lưu vào sản phẩm vẫn nằm trên ổ đĩa |

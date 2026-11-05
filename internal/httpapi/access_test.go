@@ -154,6 +154,8 @@ func routes(s *shop, x sweepTarget) map[string]access {
 		"POST /api/v1/admin/users/{id}/lock":           {allow: []string{admin}, denyOnly: true, path: user + "/lock", body: reason},
 		"POST /api/v1/admin/users/{id}/unlock":         {allow: []string{admin}, denyOnly: true, path: user + "/unlock", body: reason},
 		"POST /api/v1/admin/users/{id}/mfa-reset":      {allow: []string{admin}, denyOnly: true, path: user + "/mfa-reset", body: reason},
+		"POST /api/v1/admin/users/{id}/profile-erase":  {allow: []string{admin}, denyOnly: true, path: user + "/profile-erase", body: reason},
+		"GET /api/v1/admin/profile-retention":          {allow: []string{admin}},
 		"GET /api/v1/admin/permission-matrix":          {allow: []string{admin}},
 		"POST /api/v1/admin/permission-matrix":         {allow: []string{admin}, denyOnly: true, body: `{"version":"x","matrix":{},"reason":"x"}`},
 		"GET /api/v1/admin/audit-events":               {allow: approvers},

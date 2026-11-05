@@ -17,6 +17,7 @@ import (
 	"webee_rentor/internal/media/mediaapp"
 	"webee_rentor/internal/money"
 	"webee_rentor/internal/rentals/rentalsapp"
+	"webee_rentor/internal/retention/retentionapp"
 	"webee_rentor/internal/support/supportapp"
 )
 
@@ -39,6 +40,7 @@ type Services struct {
 	Support    *supportapp.Service
 	Media      *mediaapp.Service
 	Backoffice *backoffice.Service
+	Retention  *retentionapp.Service
 	Store      StoreInfo
 }
 
@@ -107,6 +109,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/admin/dashboard", s.authed(s.dashboard))
 	mux.HandleFunc("GET /api/v1/admin/users", s.authed(s.adminUsers))
+	mux.HandleFunc("GET /api/v1/admin/profile-retention", s.authed(s.profileRetention))
+	mux.HandleFunc("POST /api/v1/admin/users/{id}/profile-erase", s.authed(s.eraseProfile))
 	mux.HandleFunc("GET /api/v1/admin/audit-events", s.authed(s.auditEvents))
 	mux.HandleFunc("GET /api/v1/admin/catalog/items", s.authed(s.adminItems))
 	mux.HandleFunc("POST /api/v1/admin/catalog/items", s.authed(s.saveItem))

@@ -675,6 +675,18 @@ export interface AdminUser extends User {
   last_seen_at: string | null;
 }
 
+/** Why a profile due for review must stay (decision D39). */
+export type RetentionBlocker = 'OPEN_BOOKING' | 'MONEY_OPEN' | 'OPEN_FEE' | 'OPEN_SUPPORT' | 'RECENTLY_ACTIVE';
+
+export interface ProfileReview {
+  user_id: string;
+  email: string;
+  full_name: string;
+  phone: string;
+  last_activity_at: string;
+  blockers: RetentionBlocker[];
+}
+
 export interface AdminItem {
   id: string;
   slug: string;

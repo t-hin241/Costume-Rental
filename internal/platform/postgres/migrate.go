@@ -47,6 +47,21 @@ func MigrateDown(dsn string) error {
 	return nil
 }
 
+// MigrateTo moves the schema to one version, up or down, so a test can put
+// data in place before a migration runs. Like MigrateDown, tests and local
+// development only.
+func MigrateTo(dsn string, version uint) error {
+	m, err := newMigrator(dsn)
+	if err != nil {
+		return err
+	}
+	defer m.Close()
+	if err := m.Migrate(version); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("postgres: migrate to %d: %w", version, err)
+	}
+	return nil
+}
+
 func newMigrator(dsn string) (*migrate.Migrate, error) {
 	src, err := iofs.New(migrationFiles, "migrations")
 	if err != nil {

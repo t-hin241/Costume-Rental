@@ -26,7 +26,7 @@ const matrix = {
   finance: ['booking.read_all', 'support.handle', 'payment.read', 'payment.record', 'charge.reverse', 'refund.create', 'refund.approve', 'deduction.approve', 'fee.approve', 'fee.waive', 'revenue.read', 'audit.read'],
   admin: [] as string[],
 } satisfies Record<Role, string[]>;
-matrix.admin = [...new Set([...Object.values(matrix).flat(), 'rental.confirm_lost', 'fee.approve_high', 'promotion.manage', 'pricing.manual_adjust', 'tax.manage', 'user.role_manage', 'user.lock', 'policy.manage'])];
+matrix.admin = [...new Set([...Object.values(matrix).flat(), 'rental.confirm_lost', 'fee.approve_high', 'promotion.manage', 'pricing.manual_adjust', 'tax.manage', 'user.role_manage', 'user.lock', 'policy.manage', 'customer.profile_erase'])];
 
 function user(id: string, email: string, full_name: string, phone: string, roles: Role[]): MockUser {
   return {

@@ -882,6 +882,15 @@ export const handlers: HttpHandler[] = [
     audit(user.full_name, 'user.unlock', 'user', u.id, (await request.json() as { reason: string }).reason);
     return none();
   }),
+  get('/admin/profile-retention', ({ request }) => {
+    requirePerm('customer.profile_erase');
+    // The mock store has no accounts unused for 24 months.
+    return json(paged([], new URL(request.url)));
+  }),
+  post('/admin/users/:id/profile-erase', () => {
+    requirePerm('customer.profile_erase');
+    return fail(409, 'retention.profile_kept');
+  }),
   post('/admin/users/:id/mfa-reset', () => {
     requirePerm('user.lock');
     return none();

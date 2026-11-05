@@ -41,9 +41,11 @@ func AddMessage(ctx context.Context, q postgres.Querier, id string, m support.Me
 	return nil
 }
 
-// SetStatus records where a request stands.
+// SetStatus records where a request stands. Resolving stamps resolved_at,
+// from which the conversation's retention runs (decision D39).
 func SetStatus(ctx context.Context, q postgres.Querier, id string, s support.Status, now time.Time) error {
-	if _, err := q.Exec(ctx, `UPDATE support_requests SET status = $2, updated_at = $3 WHERE id = $1`, id, s, now.UTC()); err != nil {
+	if _, err := q.Exec(ctx, `UPDATE support_requests SET status = $2, updated_at = $3,
+		resolved_at = CASE WHEN $2 = 'RESOLVED' THEN $3::timestamptz END WHERE id = $1`, id, s, now.UTC()); err != nil {
 		return fmt.Errorf("update support request %s: %w", id, err)
 	}
 	return nil

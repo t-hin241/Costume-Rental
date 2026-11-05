@@ -3,7 +3,7 @@ import type {
   AdminBundle, AdminItem, AdminUser, Asset, AssetAction, AssetHistoryEntry, AssetStatus, AuditEvent, Availability, BookingDetail,
   BookingInput, BookingStatus, BookingSummary, Bucket, Campaign, CancellationPreview, Category, Condition, Dashboard, FeeAssessment, FeeKind,
   FulfillmentOptions, LoginResult, MFAEnrollment, Money, OfferingDetail, OfferingKind, OfferingPage, OpsAlerts, OpsOverview, Page,
-  PaymentChannel, PaymentMethod, PaymentPurpose, PaymentSession, PermissionMatrix, PolicyDocument, Profile, PublicPolicy, Quote, RentalPackage, Role, ScheduleEvent, Session, StoreCalendar,
+  PaymentChannel, PaymentMethod, PaymentPurpose, PaymentSession, PermissionMatrix, PolicyDocument, Profile, ProfileReview, PublicPolicy, Quote, RentalPackage, Role, ScheduleEvent, Session, StoreCalendar,
   StoreInfo, SupportRequest, SupportTopic, User,
 } from './types';
 
@@ -205,6 +205,10 @@ export const adminApi = {
   dashboard: (range_days: number) => api<Dashboard>('/admin/dashboard', { query: { range_days } }),
   users: (query: { q?: string; role?: string; page?: number; page_size?: number }) =>
     api<Page<AdminUser>>('/admin/users', { query: { ...query } }),
+  profileRetention: (query: { page?: number; page_size?: number }) =>
+    api<Page<ProfileReview>>('/admin/profile-retention', { query: { ...query } }),
+  eraseProfile: (id: string, reason: string) =>
+    api<void>(`/admin/users/${encodeURIComponent(id)}/profile-erase`, { method: 'POST', body: { reason } }),
   audit: (query: AuditQuery) => api<Page<AuditEvent>>('/admin/audit-events', { query: { ...query } }),
   items: () => api<AdminItem[]>('/admin/catalog/items'),
   saveItem: (id: string | null, body: ItemInput) =>

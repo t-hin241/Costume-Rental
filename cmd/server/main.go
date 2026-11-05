@@ -34,6 +34,7 @@ import (
 	"webee_rentor/internal/platform/ratelimit/ratelimitpg"
 	"webee_rentor/internal/platform/secretbox"
 	"webee_rentor/internal/rentals/rentalsapp"
+	"webee_rentor/internal/retention/retentionapp"
 	"webee_rentor/internal/support/supportapp"
 )
 
@@ -151,7 +152,7 @@ func run(ctx context.Context) error {
 	httpCfg.Services = &httpapi.Services{
 		Catalog: catalogapp.New(pool), Rentals: rentalSvc, Inventory: inventorySvc, Support: supportapp.New(pool),
 		Media:      mediaapp.New(pool, mediaStore, int64(mediaMaxBytes)),
-		Backoffice: backoffice.New(pool, loc, rentalSvc, inventorySvc), Store: store,
+		Backoffice: backoffice.New(pool, loc, rentalSvc, inventorySvc), Retention: retentionapp.New(pool), Store: store,
 	}
 	limiter := ratelimitpg.New(pool, nil)
 	httpCfg.Limiter = limiter
@@ -161,6 +162,7 @@ func run(ctx context.Context) error {
 	}
 	go sweepRateLimits(ctx, limiter, httpCfg.RateLimits.LongestWindow())
 	go expireHolds(ctx, rentalSvc)
+	go purgeSupport(ctx, httpCfg.Services.Retention)
 
 	srv := &http.Server{
 		Addr: addr, Handler: handler,
@@ -209,6 +211,36 @@ func expireHolds(ctx context.Context, rentals *rentalsapp.Service) {
 				slog.Error("modification hold expiry failed", "expired", n, "error", err)
 			}
 			cancel()
+		}
+	}
+}
+
+// purgeSupport deletes support conversations past their retention (decision
+// D39) once an hour, a bounded batch at a time until none are due.
+func purgeSupport(ctx context.Context, retention *retentionapp.Service) {
+	const batch, maxBatches = 100, 50
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			for range maxBatches {
+				passCtx, cancel := context.WithTimeout(ctx, time.Minute)
+				n, err := retention.PurgeSupport(passCtx, batch)
+				cancel()
+				if err != nil {
+					slog.Error("support retention purge failed", "error", err)
+					break
+				}
+				if n > 0 {
+					slog.Info("support conversations purged", "count", n)
+				}
+				if n < batch {
+					break
+				}
+			}
 		}
 	}
 }

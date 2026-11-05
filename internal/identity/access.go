@@ -94,6 +94,10 @@ const (
 	// PermSupportHandle reads and answers every customer's support requests.
 	PermSupportHandle Permission = "support.handle"
 
+	// PermCustomerProfileErase reviews the profiles of unused customer
+	// accounts and erases them (decision D39).
+	PermCustomerProfileErase Permission = "customer.profile_erase"
+
 	PermUserRoleManage Permission = "user.role_manage"
 	PermUserLock       Permission = "user.lock"
 	PermAuditRead      Permission = "audit.read"
@@ -118,14 +122,14 @@ var allPermissions = []Permission{
 	PermChargeCreate, PermChargeReverse,
 	PermRefundCreate, PermRefundApprove, PermDeductionCreate, PermDeductionApprove,
 	PermPromotionManage, PermPricingManualAdjust, PermTaxManage, PermRevenueRead,
-	PermSupportHandle,
+	PermSupportHandle, PermCustomerProfileErase,
 	PermUserRoleManage, PermUserLock, PermAuditRead, PermPolicyManage,
 }
 
 // ReferencePermissionMatrix is the owner-approved default matrix (decision
 // D22, based on docs/about_costume_rental.md §10). Production reads the
-// active, versioned matrix from configuration; migrations 000009 and 000016
-// seed it with exactly this content.
+// active, versioned matrix from configuration; migrations 000009, 000016 and
+// 000018 seed it with exactly this content.
 func ReferencePermissionMatrix() PermissionMatrix {
 	return PermissionMatrix{
 		RoleCustomer: {

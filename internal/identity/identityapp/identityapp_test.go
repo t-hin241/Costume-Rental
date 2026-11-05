@@ -22,7 +22,7 @@ func TestAdminPublishesMatrixAndItAppliesToTheNextRequest(t *testing.T) {
 	staff := f.User("staff", identity.RoleRentalStaff)
 	t.Cleanup(func() {
 		// Versions are immutable; re-publishing the seed restores it.
-		if err := svc.PublishMatrix(ctx, admin, "reference-2026-11-02", identity.ReferencePermissionMatrix(), "test cleanup"); err != nil {
+		if err := svc.PublishMatrix(ctx, admin, "reference-2026-11-05", identity.ReferencePermissionMatrix(), "test cleanup"); err != nil {
 			t.Error(err)
 		}
 	})

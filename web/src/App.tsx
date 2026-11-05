@@ -35,6 +35,7 @@ const AdminPermissions = lazy(() => import('./features/admin/Permissions'));
 const AdminAudit = lazy(() => import('./features/admin/Audit'));
 const AdminPolicies = lazy(() => import('./features/admin/Policies'));
 const AdminPromotions = lazy(() => import('./features/admin/Promotions'));
+const AdminDataRetention = lazy(() => import('./features/admin/DataRetention'));
 
 const PaymentReturn = lazy(() => import('./features/payment/PaymentReturn'));
 const NotFound = lazy(() => import('./features/NotFound'));
@@ -109,6 +110,7 @@ export function App() {
                     <Route path="admin" element={<RequirePermission anyOf={['revenue.read', 'policy.manage']}><AdminDashboard /></RequirePermission>} />
                     <Route path="admin/catalog" element={<RequirePermission anyOf={['catalog.manage']}><AdminCatalog /></RequirePermission>} />
                     <Route path="admin/users" element={<RequirePermission anyOf={['user.role_manage', 'user.lock']}><AdminUsers /></RequirePermission>} />
+                    <Route path="admin/data-retention" element={<RequirePermission anyOf={['customer.profile_erase']}><AdminDataRetention /></RequirePermission>} />
                     <Route path="admin/permissions" element={<RequirePermission anyOf={['policy.manage']}><AdminPermissions /></RequirePermission>} />
                     <Route path="admin/audit" element={<RequirePermission anyOf={['audit.read']}><AdminAudit /></RequirePermission>} />
                     <Route path="admin/policies" element={<RequirePermission anyOf={['policy.manage']}><AdminPolicies /></RequirePermission>} />

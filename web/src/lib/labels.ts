@@ -1,7 +1,7 @@
 import type {
   AssessmentStatus, AssetAction, AssetStatus, AuditResult, BookingAction, BookingItemState, BookingStatus, Bucket,
   CampaignStatus, CampaignType, CatalogStatus, ChargeKind, Condition, FeeKind, FundsRequirement, LegMode,
-  PaymentChannel, PaymentMethod, PaymentPurpose, PaymentState, PaymentStatus, RefundStatus, Role, SupportStatus, SupportTopic, UserStatus,
+  PaymentChannel, PaymentMethod, PaymentPurpose, PaymentState, PaymentStatus, RefundStatus, RetentionBlocker, Role, SupportStatus, SupportTopic, UserStatus,
 } from './api/types';
 
 // Vietnamese labels for the backend's enums. Status colours always travel
@@ -165,6 +165,14 @@ export const roleLabel: Record<Role, string> = {
 
 export const allRoles: Role[] = ['customer', 'rental_staff', 'inventory_manager', 'finance', 'admin'];
 
+export const retentionBlocker: Record<RetentionBlocker, string> = {
+  OPEN_BOOKING: 'Còn đơn chưa xong',
+  MONEY_OPEN: 'Tiền chưa quyết toán',
+  OPEN_FEE: 'Phí đang chờ hoặc tranh chấp',
+  OPEN_SUPPORT: 'Hỗ trợ chưa đóng',
+  RECENTLY_ACTIVE: 'Mới hoạt động lại',
+};
+
 export const userStatus: Record<UserStatus, StatusLabel> = {
   ACTIVE: { label: 'Đang hoạt động', tone: 'success' },
   LOCKED: { label: 'Đã khóa', tone: 'danger' },
@@ -312,6 +320,7 @@ export const permissionGroups: { title: string; items: Record<string, string> }[
   { title: 'Quản trị hệ thống', items: {
     'user.role_manage': 'Quản lý vai trò',
     'user.lock': 'Khóa tài khoản',
+    'customer.profile_erase': 'Xóa hồ sơ khách không còn dùng',
     'audit.read': 'Xem lịch sử thao tác',
     'policy.manage': 'Quản lý chính sách',
   } },

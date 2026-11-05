@@ -20,7 +20,7 @@ func TestSeededMatrixIsTheReferenceMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != "reference-2026-11-02" || !reflect.DeepEqual(m.Normalized(), identity.ReferencePermissionMatrix().Normalized()) {
+	if version != "reference-2026-11-05" || !reflect.DeepEqual(m.Normalized(), identity.ReferencePermissionMatrix().Normalized()) {
 		t.Fatalf("seeded matrix %s differs from identity.ReferencePermissionMatrix", version)
 	}
 }

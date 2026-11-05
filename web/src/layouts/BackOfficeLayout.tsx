@@ -26,6 +26,7 @@ const groups: { title: string; items: NavItem[] }[] = [
       { to: '/admin/promotions', label: 'Khuyến mãi', icon: 'tag', anyOf: ['promotion.manage'] },
       { to: '/admin/policies', label: 'Chính sách', icon: 'settings', anyOf: ['policy.manage'] },
       { to: '/admin/users', label: 'Người dùng', icon: 'users', anyOf: ['user.role_manage', 'user.lock'] },
+      { to: '/admin/data-retention', label: 'Dữ liệu cá nhân', icon: 'shield', anyOf: ['customer.profile_erase'] },
       { to: '/admin/permissions', label: 'Phân quyền', icon: 'shield', anyOf: ['policy.manage'] },
       { to: '/admin/audit', label: 'Lịch sử thao tác', icon: 'list', anyOf: ['audit.read'] },
     ],
