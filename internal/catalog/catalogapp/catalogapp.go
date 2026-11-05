@@ -63,7 +63,7 @@ type Offering struct {
 	ID              string
 	Slug            string
 	Name            string
-	Category        *catalog.Category
+	Categories      []catalog.Category
 	Images          []catalog.Image
 	Prices          []PackagePrice
 	Sizes           []string
@@ -163,12 +163,15 @@ func (s *Service) read(ctx context.Context) (catalogRead, error) {
 	return c, nil
 }
 
-func (c catalogRead) category(id catalog.CategoryID) *catalog.Category {
-	i := slices.IndexFunc(c.categories, func(x catalog.Category) bool { return x.ID == id })
-	if i < 0 {
-		return nil
+// categoriesOf resolves category ids, keeping their order.
+func (c catalogRead) categoriesOf(ids []catalog.CategoryID) []catalog.Category {
+	var out []catalog.Category
+	for _, id := range ids {
+		if i := slices.IndexFunc(c.categories, func(x catalog.Category) bool { return x.ID == id }); i >= 0 {
+			out = append(out, c.categories[i])
+		}
 	}
-	return &c.categories[i]
+	return out
 }
 
 // prices lists a price per active package, cheapest first.
@@ -204,7 +207,7 @@ func collect(sizes, colors []string, vs []catalog.Variant) ([]string, []string) 
 func (c catalogRead) itemOffering(it catalog.Item) Offering {
 	vs := activeVariants(it.Variants)
 	o := Offering{
-		Kind: catalog.KindItem, ID: string(it.ID), Slug: it.Slug, Name: it.Name, Category: c.category(it.CategoryID), Images: it.Images,
+		Kind: catalog.KindItem, ID: string(it.ID), Slug: it.Slug, Name: it.Name, Categories: c.categoriesOf(it.CategoryIDs), Images: it.Images,
 		Prices: c.prices(it.Prices), ComponentCount: 1, Description: it.Description, Variants: vs, SecurityDeposit: it.SecurityDeposit,
 		bookings: c.stats[string(it.ID)].Bookings, updated: c.stats[string(it.ID)].UpdatedAt,
 	}
@@ -218,7 +221,7 @@ func (c catalogRead) bundleOffering(b catalog.Bundle) (Offering, error) {
 		return Offering{}, err
 	}
 	o := Offering{
-		Kind: catalog.KindBundle, ID: string(b.ID), Slug: b.Slug, Name: b.Name, Category: c.category(b.CategoryID), Images: b.Images,
+		Kind: catalog.KindBundle, ID: string(b.ID), Slug: b.Slug, Name: b.Name, Categories: c.categoriesOf(b.CategoryIDs), Images: b.Images,
 		Prices: c.prices(b.Prices), ComponentCount: len(b.Components), Description: b.Description, SecurityDeposit: deposit,
 		bookings: c.stats[string(b.ID)].Bookings, updated: c.stats[string(b.ID)].UpdatedAt,
 	}
@@ -275,7 +278,7 @@ func matches(o Offering, q Query) bool {
 	switch {
 	case q.Term != "" && !strings.Contains(fold(o.Name), fold(q.Term)):
 		return false
-	case q.Category != "" && (o.Category == nil || o.Category.Slug != q.Category):
+	case q.Category != "" && !slices.ContainsFunc(o.Categories, func(c catalog.Category) bool { return c.Slug == q.Category }):
 		return false
 	case q.Kind != "" && o.Kind != q.Kind:
 		return false
@@ -369,7 +372,7 @@ func (s *Service) Categories(ctx context.Context) ([]CategoryView, error) {
 	for _, cat := range c.categories {
 		n := 0
 		for _, o := range all {
-			if o.Category != nil && o.Category.ID == cat.ID {
+			if slices.ContainsFunc(o.Categories, func(x catalog.Category) bool { return x.ID == cat.ID }) {
 				n++
 			}
 		}

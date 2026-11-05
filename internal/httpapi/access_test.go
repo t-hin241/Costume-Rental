@@ -50,7 +50,7 @@ var publicRoutes = []string{
 	"POST /api/v1/auth/login", "POST /api/v1/auth/login/mfa/enroll", "POST /api/v1/auth/login/mfa", "POST /api/v1/auth/logout",
 	"POST /api/v1/auth/password-reset", "POST /api/v1/auth/password-reset/confirm",
 	"GET /api/v1/catalog/categories", "GET /api/v1/catalog/packages", "GET /api/v1/catalog/offerings", "GET /api/v1/catalog/offerings/{kind}/{slug}",
-	"GET /api/v1/store/info", "GET /api/v1/store/calendar", "GET /api/v1/store/fulfillment-options", "GET /api/v1/policies/public",
+	"GET /api/v1/store/info", "GET /api/v1/store/calendar", "GET /api/v1/store/fulfillment-options", "GET /api/v1/policies/public", "GET /api/v1/media/{name}",
 	"POST /api/v1/availability", "POST /api/v1/quotes",
 }
 
@@ -167,6 +167,7 @@ func routes(s *shop, x sweepTarget) map[string]access {
 		"PUT /api/v1/admin/catalog/categories/{id}":    {allow: catalogs, denyOnly: true, path: "/api/v1/admin/catalog/categories/x", body: category},
 		"POST /api/v1/admin/catalog/packages":          {allow: catalogs, denyOnly: true, body: pack},
 		"PUT /api/v1/admin/catalog/packages/{id}":      {allow: catalogs, denyOnly: true, path: "/api/v1/admin/catalog/packages/x", body: pack},
+		"POST /api/v1/admin/media/images":              {allow: catalogs, denyOnly: true, body: "not an image"},
 		"GET /api/v1/admin/policies/active":            {allow: []string{admin}},
 		"POST /api/v1/admin/policies":                  {allow: []string{admin}, denyOnly: true, body: `{"policy":{},"reason":"x"}`},
 		"GET /api/v1/admin/promotions":                 {allow: []string{admin}},

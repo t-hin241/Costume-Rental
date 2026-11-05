@@ -209,6 +209,7 @@ export const adminApi = {
   items: () => api<AdminItem[]>('/admin/catalog/items'),
   saveItem: (id: string | null, body: ItemInput) =>
     id ? api<AdminItem>(`/admin/catalog/items/${id}`, { method: 'PUT', body }) : api<AdminItem>('/admin/catalog/items', { method: 'POST', body }),
+  uploadImage: (file: File) => api<{ url: string }>('/admin/media/images', { method: 'POST', file }),
   bundles: () => api<AdminBundle[]>('/admin/catalog/bundles'),
   saveBundle: (id: string | null, body: BundleInput) =>
     id ? api<AdminBundle>(`/admin/catalog/bundles/${id}`, { method: 'PUT', body }) : api<AdminBundle>('/admin/catalog/bundles', { method: 'POST', body }),

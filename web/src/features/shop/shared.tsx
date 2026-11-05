@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Icon } from '../../components/Icon';
 import { LogoMark } from '../../components/Logo';
 import { Notice, Skeleton } from '../../components/ui';
+import { assetURL } from '../../lib/api/client';
 import { catalogApi, storeApi } from '../../lib/api/endpoints';
 import type { Availability, CalendarDay, Image, Money, OfferingCard, Quote, RentalPackage, ReservationTreatment } from '../../lib/api/types';
 import type { BagSchedule } from '../../lib/bag';
@@ -11,7 +12,7 @@ import { addBusinessDays, businessToday, formatDateTime, formatMoney } from '../
 
 export function OfferingImage({ image }: { image: Image | null | undefined }) {
   if (!image) return <div className="no-image"><LogoMark size={54} /></div>;
-  return <img src={image.url} alt={image.alt} loading="lazy" />;
+  return <img src={assetURL(image.url)} alt={image.alt} loading="lazy" />;
 }
 
 export function ProductCard({ offering }: { offering: OfferingCard }) {
@@ -22,7 +23,7 @@ export function ProductCard({ offering }: { offering: OfferingCard }) {
         {offering.kind === 'BUNDLE' && <span className="product-kind">Nguyên bộ</span>}
       </div>
       <div className="product-info">
-        {offering.category && <p className="product-cat">{offering.category.name}</p>}
+        {offering.categories[0] && <p className="product-cat">{offering.categories[0].name}</p>}
         <h3 className="product-name">{offering.name}</h3>
         <p className="product-price">Từ <strong className="tnum">{formatMoney(offering.from_price)}</strong> <span className="muted">/ {offering.from_package_label}</span></p>
         {offering.sizes.length > 0 && <div className="product-sizes">{offering.sizes.slice(0, 6).map((s) => <span key={s}>{s}</span>)}</div>}

@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { QueryState, useToast } from '../../components/feedback';
 import { Badge, Button, FormError, MoneyText, Notice, Skeleton } from '../../components/ui';
-import { ApiError } from '../../lib/api/client';
+import { ApiError, assetURL } from '../../lib/api/client';
 import { bookingApi, catalogApi } from '../../lib/api/endpoints';
 import type { BookingInput, BundleComponent, OfferingDetail, Variant } from '../../lib/api/types';
 import { useBag } from '../../lib/bag';
@@ -107,7 +107,7 @@ function ProductView({ offering }: { offering: OfferingDetail }) {
           <div className="gallery-thumbs">
             {offering.images.map((img, i) => (
               <button key={img.url} type="button" aria-label={`Ảnh ${i + 1}`} aria-current={i === imageIndex} onClick={() => setImageIndex(i)}>
-                <img src={img.url} alt="" />
+                <img src={assetURL(img.url)} alt="" />
               </button>
             ))}
           </div>
@@ -115,7 +115,7 @@ function ProductView({ offering }: { offering: OfferingDetail }) {
       </div>
 
       <div>
-        {offering.category && <Link className="product-cat" to={`/catalog?category=${offering.category.slug}`}>{offering.category.name}</Link>}
+        {offering.categories.map((c) => <Link key={c.id} className="product-cat" to={`/catalog?category=${c.slug}`}>{c.name}</Link>)}
         <h1 className="pdp-title">{offering.name}</h1>
         <div className="row" style={{ marginTop: 8 }}>
           {isBundle && <Badge tone="brand" label="Thuê nguyên bộ" />}

@@ -136,8 +136,9 @@ type Item struct {
 	DailyRate money.Money
 	// BufferClass selects the preparation/turnaround buffer in rental policy.
 	BufferClass string
-	// CategoryID, Description and Images only present the item to customers.
-	CategoryID  CategoryID
+	// CategoryIDs, Description and Images only present the item to customers.
+	// The first category is the one shown on its card.
+	CategoryIDs []CategoryID
 	Description string
 	Images      []Image
 	// Version increments on every change; bookings snapshot it.
@@ -181,7 +182,7 @@ func (it Item) Validate() error {
 	if strings.TrimSpace(it.BufferClass) == "" {
 		return domainerr.Invalid("buffer_class", "required")
 	}
-	return validatePresentation(it.Description, it.Images)
+	return validatePresentation(it.CategoryIDs, it.Description, it.Images)
 }
 
 // Variant finds a variant by ID.
@@ -222,8 +223,9 @@ type Bundle struct {
 	// one bundle. Component deposits are then not charged, so the same
 	// responsibility is never charged twice.
 	DepositOverride *money.Money
-	// CategoryID, Description and Images only present the bundle to customers.
-	CategoryID  CategoryID
+	// CategoryIDs, Description and Images only present the bundle to customers.
+	// The first category is the one shown on its card.
+	CategoryIDs []CategoryID
 	Description string
 	Images      []Image
 	Version     int
@@ -270,7 +272,7 @@ func (b Bundle) Validate(items map[ItemID]Item) error {
 	if b.DepositOverride != nil && (!b.DepositOverride.Currency().Valid() || b.DepositOverride.IsNegative()) {
 		return domainerr.Invalid("deposit_override", "must be zero or positive in a supported currency")
 	}
-	return validatePresentation(b.Description, b.Images)
+	return validatePresentation(b.CategoryIDs, b.Description, b.Images)
 }
 
 // UnitDeposit is the security deposit of one bundle: the override when set,

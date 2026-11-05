@@ -107,6 +107,12 @@ func IsUniqueViolation(err error, constraint string) bool {
 	return errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == constraint
 }
 
+// IsForeignKeyViolation reports a reference to a row that does not exist.
+func IsForeignKeyViolation(err error, constraint string) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "23503" && pg.ConstraintName == constraint
+}
+
 // IsInvalidText reports whether the database refused a value as text (SQLSTATE
 // 22021): a NUL character or broken UTF-8, which only a client can have sent.
 func IsInvalidText(err error) bool {

@@ -25,6 +25,8 @@ import (
 	"webee_rentor/internal/identity/identityapp"
 	"webee_rentor/internal/identity/identitypg"
 	"webee_rentor/internal/inventory/inventoryapp"
+	"webee_rentor/internal/media/mediaapp"
+	"webee_rentor/internal/media/mediafs"
 	"webee_rentor/internal/notifications"
 	"webee_rentor/internal/notifications/smtpmail"
 	"webee_rentor/internal/platform/envconfig"
@@ -73,8 +75,13 @@ func run(ctx context.Context) error {
 		From: env.Required("SMTP_FROM"), FromName: env.String("SMTP_FROM_NAME", shopName),
 		TLS: smtpmail.TLSMode(env.String("SMTP_TLS", string(smtpmail.TLSStartTLS))),
 	}
+	mediaDir := env.Required("MEDIA_DIR")
+	mediaMaxBytes := env.Int("MEDIA_MAX_BYTES", 5<<20)
 	if err := env.Err(); err != nil {
 		return err
+	}
+	if mediaMaxBytes < 1 {
+		return errors.New("MEDIA_MAX_BYTES must be positive")
 	}
 	dev := !httpCfg.CookieSecure
 	if dev {
@@ -130,10 +137,20 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	mediaStore, err := mediafs.New(mediaDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := mediaStore.Close(); err != nil {
+			slog.Warn("media folder not closed", "error", err)
+		}
+	}()
 	inventorySvc := inventoryapp.New(pool)
 	rentalSvc := rentalsapp.New(pool, loc, rentalsapp.WithNotifier(bookingMail))
 	httpCfg.Services = &httpapi.Services{
 		Catalog: catalogapp.New(pool), Rentals: rentalSvc, Inventory: inventorySvc, Support: supportapp.New(pool),
+		Media:      mediaapp.New(pool, mediaStore, int64(mediaMaxBytes)),
 		Backoffice: backoffice.New(pool, loc, rentalSvc, inventorySvc), Store: store,
 	}
 	limiter := ratelimitpg.New(pool, nil)

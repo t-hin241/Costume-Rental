@@ -12,6 +12,7 @@ import (
 type CategoryID string
 
 const (
+	maxCategories  = 10
 	maxDescription = 4000
 	maxImages      = 10
 	maxImageURL    = 2000
@@ -64,7 +65,17 @@ func (c Category) Validate() error {
 	return nil
 }
 
-func validatePresentation(description string, images []Image) error {
+func validatePresentation(categories []CategoryID, description string, images []Image) error {
+	if len(categories) > maxCategories {
+		return domainerr.Invalid("category_ids", fmt.Sprintf("at most %d categories", maxCategories))
+	}
+	seen := make(map[CategoryID]bool, len(categories))
+	for _, c := range categories {
+		if c == "" || seen[c] {
+			return domainerr.Invalid("category_ids", "categories must be present and unique")
+		}
+		seen[c] = true
+	}
 	if utf8.RuneCountInString(description) > maxDescription {
 		return domainerr.Invalid("description", fmt.Sprintf("at most %d characters", maxDescription))
 	}

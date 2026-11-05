@@ -37,12 +37,13 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 |---|---|
 | `GET /catalog/categories` | Danh mục kèm số mẫu |
 | `GET /catalog/packages` | Gói đang bán; người có `catalog.manage` thấy cả gói ngừng dùng |
-| `GET /catalog/offerings` | `q, category, kind, size, color, sort, page`; trả thêm `facets`. Tìm kiếm không phân biệt dấu |
+| `GET /catalog/offerings` | `q, category, kind, size, color, sort, page`; trả thêm `facets`. Tìm kiếm không phân biệt dấu. Mỗi mẫu có `categories`, danh sách có thứ tự |
 | `GET /catalog/offerings/{kind}/{slug}` | Chi tiết, variant, giá theo gói, thành phần bundle |
 | `GET /store/info` | Lấy từ biến môi trường `SHOP_*` |
 | `GET /store/calendar?from&to` | Tối đa 62 ngày. `min_date` là ngày đầu tiên còn slot đặt được |
 | `GET /store/fulfillment-options` | Hiện chỉ `STORE` |
 | `GET /policies/public` | Phần chính sách khách được xem |
+| `GET /media/{name}` | Ảnh đã tải lên, cache lâu dài vì tên ngẫu nhiên và file không đổi |
 | `POST /availability` | Kiểm tra tham khảo, có giới hạn tần suất theo IP |
 | `POST /quotes` | Báo giá đủ các khoản, có giới hạn tần suất theo IP |
 
@@ -96,7 +97,8 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `GET /admin/dashboard?range_days=` | `revenue.read` hoặc `policy.manage` |
 | `GET /admin/users?q&role&page` | `user.role_manage` |
 | `GET /admin/audit-events?q&result&page` | `audit.read` |
-| `GET`/`POST`/`PUT /admin/catalog/items`, `/bundles` | `catalog.manage` |
+| `GET`/`POST`/`PUT /admin/catalog/items`, `/bundles` | `catalog.manage`. `category_ids` là danh sách có thứ tự, tối đa 10, danh mục đầu tiên hiện trên thẻ sản phẩm |
+| `POST /admin/media/images` | `catalog.manage`, 300 lần/giờ/người. Body là chính file ảnh (không multipart). Trả `201 { url, content_type, size }`; đưa `url` vào `images` của món hoặc bộ. Nội dung file quyết định định dạng: chỉ nhận JPEG, PNG, WebP, lỗi `media.unsupported_image`; quá `MEDIA_MAX_BYTES` hoặc quá 50 triệu điểm ảnh trả `media.file_too_large`. Ảnh tải lên nhưng không được lưu vào sản phẩm vẫn nằm trên ổ đĩa |
 | `POST`/`PUT /admin/catalog/categories`, `/packages` | `catalog.manage` |
 | `GET /admin/policies/active`, `POST /admin/policies` | `policy.manage`. Luật không có trên màn hình (phí chủ động hủy, giao nhận) được giữ nguyên khi xuất bản |
 | `GET`/`POST`/`PUT /admin/promotions` | `promotion.manage`. `valid_until` là ngày cuối còn hiệu lực |
@@ -107,7 +109,6 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 |---|---|---|
 | Thanh toán trực tuyến | `online_payment_available: false`, `payment_options` rỗng. `POST /bookings/{id}/payment-sessions` và `GET /payment-sessions/{id}` trả `409 payments.gateway_unavailable`. Khách thanh toán tại quầy hoặc chuyển khoản, nhân viên ghi nhận | Chọn nhà cung cấp cổng, viết adapter và webhook (mục 4) |
 | Giao nhận tận nơi | Chỉ trả `STORE`; đặt chiều `COURIER` bị từ chối | Nối `delivery` vào `PlaceBooking`, adapter carrier, khu vực phục vụ |
-| Upload ảnh | `images` là đường dẫn `https` hoặc đường dẫn trong site | Chốt nơi lưu và giới hạn dung lượng |
 | Ưu đãi thành viên | Form không cho tạo `MEMBER_DISCOUNT` vì cần phân khúc khách | Định nghĩa phân khúc |
 | Thuế | `tax` trong `config/policy.yaml` không được nạp, doanh thu dashboard không đi qua `tax.RecognizeLedger` | Kế toán chốt A33 |
 

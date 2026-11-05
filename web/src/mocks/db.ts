@@ -120,7 +120,7 @@ function prices(one: number, three: number, seven: number) {
 
 function item(id: string, name: string, category: string, description: string, images: Image[], sizes: string[], color: string, price: [number, number, number], deposit: number, popularity: number, standalone = true): MockCatalogItem {
   return {
-    id, slug: id, name, category_id: category, description, images, status: 'ACTIVE', individually_rentable: standalone,
+    id, slug: id, name, category_ids: [category], description, images, status: 'ACTIVE', individually_rentable: standalone,
     variants: variants(id, sizes, color), prices: standalone ? prices(...price) : [], security_deposit: vnd(deposit), daily_rate: vnd(price[0]),
     buffer_class: 'default', version: 1, asset_count: sizes.length * 2, popularity,
   };
@@ -128,7 +128,7 @@ function item(id: string, name: string, category: string, description: string, i
 
 function bundle(id: string, name: string, category: string, description: string, images: Image[], components: { key: string; item: MockCatalogItem; quantity: number }[], price: [number, number, number], popularity: number): MockBundle {
   return {
-    id, slug: id, name, category_id: category, description, images, status: 'ACTIVE', version: 1, deposit_override: null, popularity,
+    id, slug: id, name, category_ids: [category], description, images, status: 'ACTIVE', version: 1, deposit_override: null, popularity,
     prices: prices(...price),
     components: components.map((c) => ({ key: c.key, item_id: c.item.id, item_name: c.item.name, quantity: c.quantity, options: c.item.variants.map((v) => v.id) })),
   };
@@ -360,15 +360,17 @@ function fromPrice(prices: { package_id: string; amount: Money }[]) {
   return { price: first?.amount ?? vnd(0), label: db.packages.find((p) => p.id === first?.package_id)?.label ?? '' };
 }
 
-function categoryRef(id: string | null) {
-  const c = db.categories.find((x) => x.id === id);
-  return c ? { id: c.id, slug: c.slug, name: c.name } : null;
+function categoryRefs(ids: string[]) {
+  return ids.flatMap((id) => {
+    const c = db.categories.find((x) => x.id === id);
+    return c ? [{ id: c.id, slug: c.slug, name: c.name }] : [];
+  });
 }
 
 export function itemCard(it: MockCatalogItem): OfferingCard {
   const from = fromPrice(it.prices);
   return {
-    id: it.id, kind: 'ITEM', slug: it.slug, name: it.name, category: categoryRef(it.category_id), images: it.images, from_price: from.price, from_package_label: from.label,
+    id: it.id, kind: 'ITEM', slug: it.slug, name: it.name, categories: categoryRefs(it.category_ids), images: it.images, from_price: from.price, from_package_label: from.label,
     sizes: [...new Set(it.variants.map((v) => v.size))], colors: [...new Set(it.variants.map((v) => v.color))], component_count: 1,
   };
 }
@@ -377,7 +379,7 @@ export function bundleCard(b: MockBundle): OfferingCard {
   const from = fromPrice(b.prices);
   const items = b.components.map((c) => db.items.find((i) => i.id === c.item_id));
   return {
-    id: b.id, kind: 'BUNDLE', slug: b.slug, name: b.name, category: categoryRef(b.category_id), images: b.images, from_price: from.price, from_package_label: from.label,
+    id: b.id, kind: 'BUNDLE', slug: b.slug, name: b.name, categories: categoryRefs(b.category_ids), images: b.images, from_price: from.price, from_package_label: from.label,
     sizes: [...new Set(items.flatMap((i) => i?.variants.map((v) => v.size) ?? []))], colors: [...new Set(items.flatMap((i) => i?.variants.map((v) => v.color) ?? []))], component_count: b.components.length,
   };
 }

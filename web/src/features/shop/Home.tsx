@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { QueryState } from '../../components/feedback';
 import { EmptyState, Skeleton, btn } from '../../components/ui';
+import { assetURL } from '../../lib/api/client';
 import { catalogApi } from '../../lib/api/endpoints';
 import { ProductCard } from './shared';
 
@@ -43,7 +44,7 @@ export default function Home() {
             {mosaic.length > 0
               ? mosaic.map((o) => (
                 <Link key={o.id} className="hex" to={`/catalog/${o.kind.toLowerCase()}/${o.slug}`} aria-label={o.name}>
-                  <img src={o.images[0]?.url} alt="" />
+                  {o.images[0] && <img src={assetURL(o.images[0].url)} alt="" />}
                 </Link>
               ))
               : Array.from({ length: 5 }, (_, i) => <span key={i} className={`hex${i % 2 ? ' hex-fill' : ''}`} />)}
@@ -59,7 +60,7 @@ export default function Home() {
               <div className="category-rail">
                 {items.map((c) => (
                   <Link key={c.id} className="category-tile" to={`/catalog?category=${c.slug}`}>
-                    {c.image && <img src={c.image.url} alt="" loading="lazy" />}
+                    {c.image && <img src={assetURL(c.image.url)} alt="" loading="lazy" />}
                     <span>{c.name}<small>{c.offering_count} mẫu</small></span>
                   </Link>
                 ))}

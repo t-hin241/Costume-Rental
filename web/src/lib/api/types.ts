@@ -96,7 +96,7 @@ export interface OfferingCard {
   kind: OfferingKind;
   slug: string;
   name: string;
-  category: Pick<Category, 'id' | 'slug' | 'name'> | null;
+  categories: Pick<Category, 'id' | 'slug' | 'name'>[];
   images: Image[];
   from_price: Money;
   from_package_label: string;
@@ -679,7 +679,7 @@ export interface AdminItem {
   id: string;
   slug: string;
   name: string;
-  category_id: string | null;
+  category_ids: string[];
   description: string;
   images: Image[];
   status: CatalogStatus;
@@ -705,7 +705,7 @@ export interface AdminBundle {
   id: string;
   slug: string;
   name: string;
-  category_id: string | null;
+  category_ids: string[];
   description: string;
   images: Image[];
   status: CatalogStatus;

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"webee_rentor/internal/catalog"
+	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/platform/postgres"
 )
 
@@ -31,11 +32,51 @@ func decodeImages(b []byte) ([]catalog.Image, error) {
 	return images, nil
 }
 
-func nullCategory(id catalog.CategoryID) *catalog.CategoryID {
-	if id == "" {
-		return nil
+// categoryLinks names the table that ties one kind of offering to categories.
+type categoryLinks struct{ table, owner string }
+
+var (
+	itemCategories   = categoryLinks{table: "catalog_item_categories", owner: "item_id"}
+	bundleCategories = categoryLinks{table: "bundle_categories", owner: "bundle_id"}
+)
+
+// save replaces the offering's categories, in order.
+func (l categoryLinks) save(ctx context.Context, q postgres.Querier, owner string, ids []catalog.CategoryID) error {
+	if _, err := q.Exec(ctx, `DELETE FROM `+l.table+` WHERE `+l.owner+` = $1`, owner); err != nil {
+		return fmt.Errorf("save categories of %s: %w", owner, err)
 	}
-	return &id
+	for i, id := range ids {
+		_, err := q.Exec(ctx, `INSERT INTO `+l.table+` (`+l.owner+`, category_id, position) VALUES ($1, $2, $3)`, owner, id, i)
+		if postgres.IsForeignKeyViolation(err, l.table+"_category_id_fkey") {
+			return domainerr.Invalid("category_ids", "unknown category")
+		}
+		if err != nil {
+			return fmt.Errorf("save categories of %s: %w", owner, err)
+		}
+	}
+	return nil
+}
+
+// load returns the categories of each offering, in order.
+func (l categoryLinks) load(ctx context.Context, q postgres.Querier, owners []string) (map[string][]catalog.CategoryID, error) {
+	rows, err := q.Query(ctx, `SELECT `+l.owner+`, category_id FROM `+l.table+` WHERE `+l.owner+` = ANY($1) ORDER BY `+l.owner+`, position`, owners)
+	if err != nil {
+		return nil, fmt.Errorf("load categories: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]catalog.CategoryID{}
+	for rows.Next() {
+		var owner string
+		var id catalog.CategoryID
+		if err := rows.Scan(&owner, &id); err != nil {
+			return nil, fmt.Errorf("load categories: %w", err)
+		}
+		out[owner] = append(out[owner], id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("load categories: %w", err)
+	}
+	return out, nil
 }
 
 // Packages lists every rental package, shortest first.

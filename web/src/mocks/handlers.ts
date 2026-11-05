@@ -406,14 +406,14 @@ export const handlers: HttpHandler[] = [
   post('/auth/password', () => none()),
 
   // Catalog and store
-  get('/catalog/categories', () => json(db.categories.map((c) => ({ ...c, offering_count: offerings().filter((o) => o.card.category?.id === c.id).length })))),
+  get('/catalog/categories', () => json(db.categories.map((c) => ({ ...c, offering_count: offerings().filter((o) => o.card.categories.some((x) => x.id === c.id)).length })))),
   get('/catalog/packages', () => json(db.packages)),
   get('/catalog/offerings', ({ request }) => {
     const url = new URL(request.url);
     const f = (k: string) => url.searchParams.get(k) ?? '';
     const term = norm(f('q'));
     const all = offerings();
-    const rows = all.filter(({ card: c }) => (!term || norm(c.name).includes(term)) && (!f('category') || c.category?.slug === f('category')) && (!f('kind') || c.kind === f('kind'))
+    const rows = all.filter(({ card: c }) => (!term || norm(c.name).includes(term)) && (!f('category') || c.categories.some((x) => x.slug === f('category'))) && (!f('kind') || c.kind === f('kind'))
       && (!f('size') || c.sizes.includes(f('size'))) && (!f('color') || c.colors.includes(f('color'))));
     const sort = f('sort');
     rows.sort((a, b) => (sort === 'price_asc' ? a.card.from_price.amount - b.card.from_price.amount : sort === 'price_desc' ? b.card.from_price.amount - a.card.from_price.amount : b.popularity - a.popularity));
@@ -903,6 +903,10 @@ export const handlers: HttpHandler[] = [
     const term = norm(url.searchParams.get('q') ?? '');
     const result = url.searchParams.get('result') ?? '';
     return json(paged(db.audit.filter((e) => (!result || e.result === result) && (!term || norm(`${e.actor} ${e.action} ${e.resource_id}`).includes(term))), url));
+  }),
+  post('/admin/media/images', async ({ request }) => {
+    requirePerm('catalog.manage');
+    return json({ url: URL.createObjectURL(await request.blob()) }, 201);
   }),
   get('/admin/catalog/items', () => { requirePerm('catalog.manage'); return json(db.items); }),
   post('/admin/catalog/items', async ({ request }) => {

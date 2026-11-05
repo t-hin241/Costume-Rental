@@ -54,6 +54,8 @@ interface RequestOptions {
   body?: unknown;
   query?: Query;
   signal?: AbortSignal;
+  /** Sent as it is, instead of a JSON body. */
+  file?: File;
 }
 
 function buildURL(path: string, query?: Query): string {
@@ -83,17 +85,22 @@ async function parseError(res: Response): Promise<ApiError> {
   });
 }
 
+/** The address of an image. Uploaded ones are served by the API, which may sit on another origin. */
+export function assetURL(url: string): string {
+  return url.startsWith('/api/') ? baseURL + url : url;
+}
+
 /** Calls the API under /api/v1 with the session cookie. */
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, query, signal } = options;
+  const { method = 'GET', body, query, signal, file } = options;
   const timeout = AbortSignal.timeout(requestTimeoutMs);
   let res: Response;
   try {
     res = await fetch(buildURL(`/api/v1${path}`, query), {
       method,
       credentials: 'include',
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: file ? { 'Content-Type': file.type } : body === undefined ? undefined : { 'Content-Type': 'application/json' },
+      body: file ?? (body === undefined ? undefined : JSON.stringify(body)),
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
   } catch (err) {

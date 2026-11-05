@@ -14,6 +14,7 @@ import (
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
 	"webee_rentor/internal/inventory/inventoryapp"
+	"webee_rentor/internal/media/mediaapp"
 	"webee_rentor/internal/money"
 	"webee_rentor/internal/rentals/rentalsapp"
 	"webee_rentor/internal/support/supportapp"
@@ -36,6 +37,7 @@ type Services struct {
 	Rentals    *rentalsapp.Service
 	Inventory  *inventoryapp.Service
 	Support    *supportapp.Service
+	Media      *mediaapp.Service
 	Backoffice *backoffice.Service
 	Store      StoreInfo
 }
@@ -59,6 +61,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/store/calendar", s.storeCalendar)
 	mux.HandleFunc("GET /api/v1/store/fulfillment-options", s.fulfillmentOptions)
 	mux.HandleFunc("GET /api/v1/policies/public", s.publicPolicy)
+	mux.HandleFunc("GET /api/v1/media/{name}", s.mediaFile)
 	mux.HandleFunc("POST /api/v1/availability", s.availability)
 	mux.HandleFunc("POST /api/v1/quotes", s.quote)
 
@@ -115,6 +118,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/admin/catalog/categories/{id}", s.authed(s.saveCategory))
 	mux.HandleFunc("POST /api/v1/admin/catalog/packages", s.authed(s.savePackage))
 	mux.HandleFunc("PUT /api/v1/admin/catalog/packages/{id}", s.authed(s.savePackage))
+	mux.HandleFunc("POST /api/v1/admin/media/images", s.authed(s.uploadImage))
 	mux.HandleFunc("GET /api/v1/admin/policies/active", s.authed(s.activePolicy))
 	mux.HandleFunc("POST /api/v1/admin/policies", s.authed(s.publishPolicy))
 	mux.HandleFunc("GET /api/v1/admin/promotions", s.authed(s.campaigns))

@@ -36,6 +36,10 @@ const messages: Record<string, string> = {
   'identity.unknown_role': 'Vai trò không hợp lệ.',
   'identity.account_locked': 'Tài khoản đã bị khóa.',
 
+  'media.unsupported_image': 'Chỉ nhận ảnh JPEG, PNG hoặc WebP.',
+  'media.file_too_large': 'Ảnh quá lớn. Hãy chọn ảnh nhỏ hơn.',
+  'media.not_found': 'Không tìm thấy ảnh.',
+
   'rentals.store_closed': 'Cửa hàng nghỉ vào ngày đã chọn.',
   'rentals.slot_not_found': 'Khung giờ đã chọn không có vào ngày này.',
   'rentals.return_outside_slots': 'Hạn trả rơi vào ngày hoặc giờ cửa hàng không nhận trả. Hãy chọn ngày hoặc gói khác.',

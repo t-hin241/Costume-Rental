@@ -74,7 +74,7 @@ type offeringCard struct {
 	Kind             catalog.OfferingKind `json:"kind"`
 	Slug             string               `json:"slug"`
 	Name             string               `json:"name"`
-	Category         *categoryRef         `json:"category"`
+	Categories       []categoryRef        `json:"categories"`
 	Images           []imageDTO           `json:"images"`
 	FromPrice        moneyDTO             `json:"from_price"`
 	FromPackageLabel string               `json:"from_package_label"`
@@ -91,14 +91,11 @@ func nonNil[T any](v []T) []T {
 }
 
 func cardOf(o catalogapp.Offering) offeringCard {
-	c := offeringCard{
+	return offeringCard{
 		ID: o.ID, Kind: o.Kind, Slug: o.Slug, Name: o.Name, Images: mapped(o.Images, imageOf), FromPrice: moneyOf(o.Prices[0].Price),
 		FromPackageLabel: o.Prices[0].Package.Label, Sizes: nonNil(o.Sizes), Colors: nonNil(o.Colors), ComponentCount: o.ComponentCount,
+		Categories: mapped(o.Categories, func(c catalog.Category) categoryRef { return categoryRef{ID: c.ID, Slug: c.Slug, Name: c.Name} }),
 	}
-	if o.Category != nil {
-		c.Category = &categoryRef{ID: o.Category.ID, Slug: o.Category.Slug, Name: o.Category.Name}
-	}
-	return c
 }
 
 type componentDTO struct {
@@ -508,34 +505,27 @@ func pricesIn(in []adminPriceDTO) (catalog.Prices, error) {
 	return out, nil
 }
 
-func categoryPtr(id catalog.CategoryID) *catalog.CategoryID {
-	if id == "" {
-		return nil
-	}
-	return &id
-}
-
 type adminItemDTO struct {
-	ID                   catalog.ItemID      `json:"id"`
-	Slug                 string              `json:"slug"`
-	Name                 string              `json:"name"`
-	CategoryID           *catalog.CategoryID `json:"category_id"`
-	Description          string              `json:"description"`
-	Images               []imageDTO          `json:"images"`
-	Status               catalog.Status      `json:"status"`
-	IndividuallyRentable bool                `json:"individually_rentable"`
-	Variants             []variantDTO        `json:"variants"`
-	Prices               []adminPriceDTO     `json:"prices"`
-	SecurityDeposit      moneyDTO            `json:"security_deposit"`
-	DailyRate            moneyDTO            `json:"daily_rate"`
-	BufferClass          string              `json:"buffer_class"`
-	Version              int                 `json:"version"`
-	AssetCount           int                 `json:"asset_count"`
+	ID                   catalog.ItemID       `json:"id"`
+	Slug                 string               `json:"slug"`
+	Name                 string               `json:"name"`
+	CategoryIDs          []catalog.CategoryID `json:"category_ids"`
+	Description          string               `json:"description"`
+	Images               []imageDTO           `json:"images"`
+	Status               catalog.Status       `json:"status"`
+	IndividuallyRentable bool                 `json:"individually_rentable"`
+	Variants             []variantDTO         `json:"variants"`
+	Prices               []adminPriceDTO      `json:"prices"`
+	SecurityDeposit      moneyDTO             `json:"security_deposit"`
+	DailyRate            moneyDTO             `json:"daily_rate"`
+	BufferClass          string               `json:"buffer_class"`
+	Version              int                  `json:"version"`
+	AssetCount           int                  `json:"asset_count"`
 }
 
 func adminItemOf(i catalogapp.AdminItem) adminItemDTO {
 	return adminItemDTO{
-		ID: i.ID, Slug: i.Slug, Name: i.Name, CategoryID: categoryPtr(i.CategoryID), Description: i.Description, Images: mapped(i.Images, imageOf),
+		ID: i.ID, Slug: i.Slug, Name: i.Name, CategoryIDs: nonNil(i.CategoryIDs), Description: i.Description, Images: mapped(i.Images, imageOf),
 		Status: i.Status, IndividuallyRentable: i.IndividuallyRentable, Variants: mapped(i.Variants, variantOf), Prices: pricesOf(i.Prices),
 		SecurityDeposit: moneyOf(i.SecurityDeposit), DailyRate: moneyOf(i.DailyRate), BufferClass: i.BufferClass, Version: i.Version, AssetCount: i.AssetCount,
 	}
@@ -551,25 +541,18 @@ func (s *Server) adminItems(w http.ResponseWriter, r *http.Request, p identity.P
 }
 
 type itemInput struct {
-	Slug                 string              `json:"slug"`
-	Name                 string              `json:"name"`
-	CategoryID           *catalog.CategoryID `json:"category_id"`
-	Description          string              `json:"description"`
-	Images               []imageDTO          `json:"images"`
-	Status               catalog.Status      `json:"status"`
-	IndividuallyRentable bool                `json:"individually_rentable"`
-	Variants             []variantDTO        `json:"variants"`
-	Prices               []adminPriceDTO     `json:"prices"`
-	SecurityDeposit      moneyDTO            `json:"security_deposit"`
-	DailyRate            moneyDTO            `json:"daily_rate"`
-	BufferClass          string              `json:"buffer_class"`
-}
-
-func deref(id *catalog.CategoryID) catalog.CategoryID {
-	if id == nil {
-		return ""
-	}
-	return *id
+	Slug                 string               `json:"slug"`
+	Name                 string               `json:"name"`
+	CategoryIDs          []catalog.CategoryID `json:"category_ids"`
+	Description          string               `json:"description"`
+	Images               []imageDTO           `json:"images"`
+	Status               catalog.Status       `json:"status"`
+	IndividuallyRentable bool                 `json:"individually_rentable"`
+	Variants             []variantDTO         `json:"variants"`
+	Prices               []adminPriceDTO      `json:"prices"`
+	SecurityDeposit      moneyDTO             `json:"security_deposit"`
+	DailyRate            moneyDTO             `json:"daily_rate"`
+	BufferClass          string               `json:"buffer_class"`
 }
 
 func optionalPath(r *http.Request, name string) (string, error) {
@@ -606,7 +589,7 @@ func (s *Server) saveItem(w http.ResponseWriter, r *http.Request, p identity.Pri
 		return
 	}
 	it, err := s.svc.Catalog.SaveItem(r.Context(), p, catalog.ItemID(id), catalog.Item{
-		Slug: in.Slug, Name: in.Name, CategoryID: deref(in.CategoryID), Description: in.Description, Images: imagesIn(in.Images), Status: in.Status,
+		Slug: in.Slug, Name: in.Name, CategoryIDs: in.CategoryIDs, Description: in.Description, Images: imagesIn(in.Images), Status: in.Status,
 		IndividuallyRentable: in.IndividuallyRentable, Prices: prices, SecurityDeposit: deposit, DailyRate: daily, BufferClass: in.BufferClass,
 		Variants: mapped(in.Variants, func(v variantDTO) catalog.Variant {
 			return catalog.Variant{ID: v.ID, SKU: v.SKU, Size: v.Size, Color: v.Color, Status: v.Status}
@@ -635,22 +618,22 @@ type adminComponentDTO struct {
 }
 
 type adminBundleDTO struct {
-	ID              catalog.BundleID    `json:"id"`
-	Slug            string              `json:"slug"`
-	Name            string              `json:"name"`
-	CategoryID      *catalog.CategoryID `json:"category_id"`
-	Description     string              `json:"description"`
-	Images          []imageDTO          `json:"images"`
-	Status          catalog.Status      `json:"status"`
-	Components      []adminComponentDTO `json:"components"`
-	Prices          []adminPriceDTO     `json:"prices"`
-	DepositOverride *moneyDTO           `json:"deposit_override"`
-	Version         int                 `json:"version"`
+	ID              catalog.BundleID     `json:"id"`
+	Slug            string               `json:"slug"`
+	Name            string               `json:"name"`
+	CategoryIDs     []catalog.CategoryID `json:"category_ids"`
+	Description     string               `json:"description"`
+	Images          []imageDTO           `json:"images"`
+	Status          catalog.Status       `json:"status"`
+	Components      []adminComponentDTO  `json:"components"`
+	Prices          []adminPriceDTO      `json:"prices"`
+	DepositOverride *moneyDTO            `json:"deposit_override"`
+	Version         int                  `json:"version"`
 }
 
 func (s *Server) adminBundleOf(ctx context.Context, b catalog.Bundle, names map[catalog.ItemID]string) adminBundleDTO {
 	return adminBundleDTO{
-		ID: b.ID, Slug: b.Slug, Name: b.Name, CategoryID: categoryPtr(b.CategoryID), Description: b.Description, Images: mapped(b.Images, imageOf),
+		ID: b.ID, Slug: b.Slug, Name: b.Name, CategoryIDs: nonNil(b.CategoryIDs), Description: b.Description, Images: mapped(b.Images, imageOf),
 		Status: b.Status, Prices: pricesOf(b.Prices), DepositOverride: moneyPtr(b.DepositOverride), Version: b.Version,
 		Components: mapped(b.Components, func(c catalog.BundleComponent) adminComponentDTO {
 			return adminComponentDTO{Key: c.Key, ItemID: c.ItemID, ItemName: names[c.ItemID], Quantity: c.Quantity, Options: nonNil(c.Options)}
@@ -685,15 +668,15 @@ func (s *Server) adminBundles(w http.ResponseWriter, r *http.Request, p identity
 }
 
 type bundleInput struct {
-	Slug            string              `json:"slug"`
-	Name            string              `json:"name"`
-	CategoryID      *catalog.CategoryID `json:"category_id"`
-	Description     string              `json:"description"`
-	Images          []imageDTO          `json:"images"`
-	Status          catalog.Status      `json:"status"`
-	Components      []adminComponentDTO `json:"components"`
-	Prices          []adminPriceDTO     `json:"prices"`
-	DepositOverride *moneyDTO           `json:"deposit_override"`
+	Slug            string               `json:"slug"`
+	Name            string               `json:"name"`
+	CategoryIDs     []catalog.CategoryID `json:"category_ids"`
+	Description     string               `json:"description"`
+	Images          []imageDTO           `json:"images"`
+	Status          catalog.Status       `json:"status"`
+	Components      []adminComponentDTO  `json:"components"`
+	Prices          []adminPriceDTO      `json:"prices"`
+	DepositOverride *moneyDTO            `json:"deposit_override"`
 }
 
 func (s *Server) saveBundle(w http.ResponseWriter, r *http.Request, p identity.Principal, _ identity.Session) {
@@ -713,7 +696,7 @@ func (s *Server) saveBundle(w http.ResponseWriter, r *http.Request, p identity.P
 		return
 	}
 	b := catalog.Bundle{
-		Slug: in.Slug, Name: in.Name, CategoryID: deref(in.CategoryID), Description: in.Description, Images: imagesIn(in.Images), Status: in.Status, Prices: prices,
+		Slug: in.Slug, Name: in.Name, CategoryIDs: in.CategoryIDs, Description: in.Description, Images: imagesIn(in.Images), Status: in.Status, Prices: prices,
 		Components: mapped(in.Components, func(c adminComponentDTO) catalog.BundleComponent {
 			return catalog.BundleComponent{Key: c.Key, ItemID: c.ItemID, Options: c.Options, Quantity: c.Quantity}
 		}),

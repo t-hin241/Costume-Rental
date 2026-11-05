@@ -24,6 +24,8 @@ import (
 	"webee_rentor/internal/identity/identityapp"
 	"webee_rentor/internal/identity/totp"
 	"webee_rentor/internal/inventory/inventoryapp"
+	"webee_rentor/internal/media/mediaapp"
+	"webee_rentor/internal/media/mediafs"
 	"webee_rentor/internal/platform/postgres/pgtest"
 	"webee_rentor/internal/platform/ratelimit"
 	"webee_rentor/internal/platform/secretbox"
@@ -53,6 +55,9 @@ func (o *outbox) VerifyEmail(_ context.Context, email, token string, _ time.Time
 func (o *outbox) PasswordReset(context.Context, string, string, time.Time) error { return nil }
 func (o *outbox) AccountExists(context.Context, string) error                    { return nil }
 
+// testImageLimit is the largest upload the test server accepts.
+const testImageLimit = 64 << 10
+
 type api struct {
 	t       *testing.T
 	f       *pgtest.Fixture
@@ -61,6 +66,8 @@ type api struct {
 	secrets map[string][]byte
 	// shop drives the business services; moving it leaves sessions alone.
 	shop *pgtest.Clock
+	// mediaDir is the folder uploads land in.
+	mediaDir string
 }
 
 type options struct {
@@ -96,19 +103,25 @@ func newAPI(t *testing.T, o options) *api {
 	shop := pgtest.NewClock(pgtest.Now)
 	stock := inventoryapp.New(f.Pool, inventoryapp.WithClock(shop.Now))
 	bookings := rentalsapp.New(f.Pool, loc, rentalsapp.WithClock(shop.Now))
+	mediaDir := t.TempDir()
+	images, err := mediafs.New(mediaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = images.Close() })
 	h, err := httpapi.New(httpapi.Config{
 		CookieSecure: true, RequestTimeout: 10 * time.Second, RateLimits: o.limits, Now: clock.Now,
 		Limiter: ratelimit.NewMemory(clock.Now), TrustedOrigins: o.origins, TrustedProxies: o.proxies,
 		Services: &httpapi.Services{
 			Catalog: catalogapp.New(f.Pool, catalogapp.WithClock(shop.Now)), Rentals: bookings, Inventory: stock,
-			Support: supportapp.New(f.Pool, supportapp.WithClock(shop.Now)), Backoffice: backoffice.New(f.Pool, loc, bookings, stock, backoffice.WithClock(shop.Now)),
+			Support: supportapp.New(f.Pool, supportapp.WithClock(shop.Now)), Media: mediaapp.New(f.Pool, images, testImageLimit), Backoffice: backoffice.New(f.Pool, loc, bookings, stock, backoffice.WithClock(shop.Now)),
 			Store: httpapi.StoreInfo{Name: "Cửa hàng thử", Address: "1 Đường Thử", Phone: "0900000000", Email: "shop@example.test", Hours: "9:00 - 18:00"},
 		},
 	}, svc, auth, func(ctx context.Context) error { return f.Pool.Ping(ctx) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &api{t: t, f: f, h: h, mail: mail, secrets: map[string][]byte{}, shop: shop}
+	return &api{t: t, f: f, h: h, mail: mail, secrets: map[string][]byte{}, shop: shop, mediaDir: mediaDir}
 }
 
 type call struct {

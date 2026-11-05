@@ -56,17 +56,17 @@ func SaveItem(ctx context.Context, q postgres.Querier, it catalog.Item, now time
 	}
 	tag, err := q.Exec(ctx, `
 		INSERT INTO catalog_items (id, slug, name, status, individually_rentable, currency,
-			security_deposit, daily_rate, buffer_class, category_id, description, images, version, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			security_deposit, daily_rate, buffer_class, description, images, version, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name, status = EXCLUDED.status,
 			individually_rentable = EXCLUDED.individually_rentable, currency = EXCLUDED.currency,
 			security_deposit = EXCLUDED.security_deposit, daily_rate = EXCLUDED.daily_rate,
-			buffer_class = EXCLUDED.buffer_class, category_id = EXCLUDED.category_id,
+			buffer_class = EXCLUDED.buffer_class,
 			description = EXCLUDED.description, images = EXCLUDED.images,
 			version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
 		WHERE catalog_items.version < EXCLUDED.version`,
 		it.ID, it.Slug, it.Name, it.Status, it.IndividuallyRentable, it.DailyRate.Currency(),
-		it.SecurityDeposit.Amount(), it.DailyRate.Amount(), it.BufferClass, nullCategory(it.CategoryID), it.Description, images,
+		it.SecurityDeposit.Amount(), it.DailyRate.Amount(), it.BufferClass, it.Description, images,
 		it.Version, now.UTC())
 	if postgres.IsUniqueViolation(err, "catalog_items_slug_key") {
 		return fmt.Errorf("item slug %s: %w", it.Slug, postgres.ErrDuplicate)
@@ -104,7 +104,7 @@ func SaveItem(ctx context.Context, q postgres.Querier, it catalog.Item, now time
 			return fmt.Errorf("save item %s price %s: %w", it.ID, pkg, err)
 		}
 	}
-	return nil
+	return itemCategories.save(ctx, q, string(it.ID), it.CategoryIDs)
 }
 
 // Items loads items with their variants and prices. Missing IDs are
@@ -113,7 +113,7 @@ func Items(ctx context.Context, q postgres.Querier, ids []catalog.ItemID) (map[c
 	ids = slices.Compact(slices.Sorted(slices.Values(ids)))
 	rows, err := q.Query(ctx, `
 		SELECT id, slug, name, status, individually_rentable, currency, security_deposit, daily_rate, buffer_class,
-			coalesce(category_id, ''), description, images, version
+			description, images, version
 		FROM catalog_items WHERE id = ANY($1)`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("load items: %w", err)
@@ -125,7 +125,7 @@ func Items(ctx context.Context, q postgres.Querier, ids []catalog.ItemID) (map[c
 		var deposit, daily int64
 		var images []byte
 		if err := rows.Scan(&it.ID, &it.Slug, &it.Name, &it.Status, &it.IndividuallyRentable, &cur,
-			&deposit, &daily, &it.BufferClass, &it.CategoryID, &it.Description, &images, &it.Version); err != nil {
+			&deposit, &daily, &it.BufferClass, &it.Description, &images, &it.Version); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan item: %w", err)
 		}
@@ -200,6 +200,18 @@ func Items(ctx context.Context, q postgres.Querier, ids []catalog.ItemID) (map[c
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("load item prices: %w", err)
 	}
+	owners := make([]string, len(ids))
+	for i, id := range ids {
+		owners[i] = string(id)
+	}
+	categories, err := itemCategories.load(ctx, q, owners)
+	if err != nil {
+		return nil, err
+	}
+	for id, it := range out {
+		it.CategoryIDs = categories[string(id)]
+		out[id] = it
+	}
 	return out, nil
 }
 
@@ -223,14 +235,14 @@ func SaveBundle(ctx context.Context, q postgres.Querier, b catalog.Bundle, items
 		return fmt.Errorf("save bundle %s: %w", b.ID, err)
 	}
 	tag, err := q.Exec(ctx, `
-		INSERT INTO bundles (id, slug, name, status, currency, deposit_override, category_id, description, images, version, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO bundles (id, slug, name, status, currency, deposit_override, description, images, version, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, name = EXCLUDED.name, status = EXCLUDED.status,
-			currency = EXCLUDED.currency, deposit_override = EXCLUDED.deposit_override, category_id = EXCLUDED.category_id,
+			currency = EXCLUDED.currency, deposit_override = EXCLUDED.deposit_override,
 			description = EXCLUDED.description, images = EXCLUDED.images,
 			version = EXCLUDED.version, updated_at = EXCLUDED.updated_at
 		WHERE bundles.version < EXCLUDED.version`,
-		b.ID, b.Slug, b.Name, b.Status, currency, override, nullCategory(b.CategoryID), b.Description, images, b.Version, now.UTC())
+		b.ID, b.Slug, b.Name, b.Status, currency, override, b.Description, images, b.Version, now.UTC())
 	if postgres.IsUniqueViolation(err, "bundles_slug_key") {
 		return fmt.Errorf("bundle slug %s: %w", b.Slug, postgres.ErrDuplicate)
 	}
@@ -266,7 +278,7 @@ func SaveBundle(ctx context.Context, q postgres.Querier, b catalog.Bundle, items
 			return fmt.Errorf("save bundle %s price %s: %w", b.ID, pkg, err)
 		}
 	}
-	return nil
+	return bundleCategories.save(ctx, q, string(b.ID), b.CategoryIDs)
 }
 
 // Bundle loads one bundle with its composition and prices.
@@ -275,15 +287,20 @@ func Bundle(ctx context.Context, q postgres.Querier, id catalog.BundleID) (catal
 	var cur money.Currency
 	var override *int64
 	var images []byte
-	err := q.QueryRow(ctx, `SELECT id, slug, name, status, currency, deposit_override, coalesce(category_id, ''), description, images, version
+	err := q.QueryRow(ctx, `SELECT id, slug, name, status, currency, deposit_override, description, images, version
 		FROM bundles WHERE id = $1`, id).
-		Scan(&b.ID, &b.Slug, &b.Name, &b.Status, &cur, &override, &b.CategoryID, &b.Description, &images, &b.Version)
+		Scan(&b.ID, &b.Slug, &b.Name, &b.Status, &cur, &override, &b.Description, &images, &b.Version)
 	if err != nil {
 		return catalog.Bundle{}, postgres.NotFound(err, fmt.Sprintf("bundle %s", id))
 	}
 	if b.Images, err = decodeImages(images); err != nil {
 		return catalog.Bundle{}, fmt.Errorf("bundle %s images: %w", id, err)
 	}
+	categories, err := bundleCategories.load(ctx, q, []string{string(id)})
+	if err != nil {
+		return catalog.Bundle{}, err
+	}
+	b.CategoryIDs = categories[string(id)]
 	if override != nil {
 		m, err := money.New(*override, cur)
 		if err != nil {

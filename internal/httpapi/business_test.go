@@ -789,7 +789,7 @@ func TestAdminManagesTheCatalogAndPublishesPolicy(t *testing.T) {
 		t.Fatalf("package = %+v", pack)
 	}
 
-	item := fmt.Sprintf(`{"slug":%q,"name":"Áo Gojo","category_id":%q,"description":"Mô tả","images":[{"url":"https://cdn.example.test/gojo.jpg","alt":"Áo Gojo"}],
+	item := fmt.Sprintf(`{"slug":%q,"name":"Áo Gojo","category_ids":[%q],"description":"Mô tả","images":[{"url":"https://cdn.example.test/gojo.jpg","alt":"Áo Gojo"}],
 		"status":"ACTIVE","individually_rentable":true,"variants":[{"id":"","sku":%q,"size":"M","color":"Đen","status":"ACTIVE"}],
 		"prices":[{"package_id":%q,"amount":{"amount":90000,"currency":"VND"}}],"security_deposit":{"amount":200000,"currency":"VND"},
 		"daily_rate":{"amount":45000,"currency":"VND"},"buffer_class":"garment"}`, s.f.Prefix+"-gojo", category.ID, s.f.Prefix+"-GOJO-M", pack.ID)
@@ -797,7 +797,7 @@ func TestAdminManagesTheCatalogAndPublishesPolicy(t *testing.T) {
 		ID       string
 		Variants []struct{ ID string }
 	}](t, s.send(s.a, "POST", "/admin/catalog/items", item, http.StatusCreated))
-	edited := strings.Replace(item, "Áo Gojo\",\"category_id", "Áo Gojo mới\",\"category_id", 1)
+	edited := strings.Replace(item, "Áo Gojo\",\"category_ids", "Áo Gojo mới\",\"category_ids", 1)
 	edited = strings.Replace(edited, `"variants":[{"id":""`, fmt.Sprintf(`"variants":[{"id":%q`, saved.Variants[0].ID), 1)
 	s.send(s.a, "PUT", "/admin/catalog/items/"+saved.ID, edited, http.StatusOK)
 	public := decode[struct{ Name string }](t, s.send(nil, "GET", "/catalog/offerings/ITEM/"+s.f.Prefix+"-gojo", "", http.StatusOK))

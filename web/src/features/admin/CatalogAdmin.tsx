@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { Icon } from '../../components/Icon';
 import { Modal, QueryState, useAction } from '../../components/feedback';
 import { Button, Card, Checkbox, EmptyState, Field, FormError, Input, PageHeader, Select, Skeleton, StatusBadge, Tabs, Textarea, fieldError } from '../../components/ui';
+import { assetURL } from '../../lib/api/client';
 import { adminApi, catalogApi, type BundleInput, type ItemInput } from '../../lib/api/endpoints';
 import type { AdminBundle, AdminBundleComponent, AdminItem, CatalogStatus, Category, Image, Money, RentalPackage, Variant } from '../../lib/api/types';
 import { formatHours, formatMoney } from '../../lib/format';
@@ -89,17 +90,46 @@ function PricesEditor({ packages, prices, onChange }: {
 
 function ImagesEditor({ images, onChange }: { images: Image[]; onChange: (i: Image[]) => void }) {
   const set = (i: number, patch: Partial<Image>) => onChange(images.map((img, n) => (n === i ? { ...img, ...patch } : img)));
+  const picker = useRef<HTMLInputElement>(null);
+  const upload = useAction((file: File) => adminApi.uploadImage(file), {
+    inline: true, onSuccess: (saved) => onChange([...images, { url: saved.url, alt: '' }]),
+  });
   return (
     <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
       <legend className="field-label">Ảnh sản phẩm</legend>
       {images.map((img, i) => (
         <div key={i} className="row" style={{ flexWrap: 'nowrap' }}>
+          {img.url && <img src={assetURL(img.url)} alt="" width={40} height={40} style={{ objectFit: 'cover', borderRadius: 6 }} />}
           <Input aria-label={`Đường dẫn ảnh ${i + 1}`} placeholder="Đường dẫn ảnh" value={img.url} onChange={(e) => set(i, { url: e.target.value })} />
           <Input aria-label={`Mô tả ảnh ${i + 1}`} placeholder="Mô tả ảnh" value={img.alt} onChange={(e) => set(i, { alt: e.target.value })} />
           <button type="button" className="icon-button" aria-label={`Xóa ảnh ${i + 1}`} onClick={() => onChange(images.filter((_, n) => n !== i))}><Icon name="trash" size={18} /></button>
         </div>
       ))}
-      <div><Button variant="ghost" size="sm" icon="plus" onClick={() => onChange([...images, { url: '', alt: '' }])}>Thêm ảnh</Button></div>
+      <input ref={picker} type="file" hidden aria-label="Chọn ảnh tải lên" accept="image/jpeg,image/png,image/webp" onChange={(e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) upload.mutate(file);
+      }} />
+      <FormError error={upload.error} />
+      <div className="row">
+        <Button variant="ghost" size="sm" icon="plus" loading={upload.isPending} onClick={() => picker.current?.click()}>Tải ảnh lên</Button>
+        <Button variant="ghost" size="sm" icon="plus" onClick={() => onChange([...images, { url: '', alt: '' }])}>Thêm bằng đường dẫn</Button>
+      </div>
+    </fieldset>
+  );
+}
+
+function CategoriesField({ categories, value, onChange }: { categories: Category[]; value: string[]; onChange: (v: string[]) => void }) {
+  return (
+    <fieldset className="full stack-sm" style={{ border: 0, padding: 0, margin: 0 }}>
+      <legend className="field-label">Danh mục</legend>
+      <div className="row">
+        {categories.map((c) => (
+          <Checkbox key={c.id} label={c.name} checked={value.includes(c.id)}
+            onChange={(e) => onChange(e.target.checked ? [...value, c.id] : value.filter((id) => id !== c.id))} />
+        ))}
+      </div>
+      <p className="small muted">Danh mục chọn đầu tiên hiện trên thẻ sản phẩm.</p>
     </fieldset>
   );
 }
@@ -137,7 +167,7 @@ const newVariant = (): Variant => ({ id: '', sku: '', size: '', color: '', statu
 
 function ItemDialog({ item, categories, packages, onClose }: { item: AdminItem | null; categories: Category[]; packages: RentalPackage[]; onClose: () => void }) {
   const [form, setForm] = useState({
-    name: item?.name ?? '', slug: item?.slug ?? '', category_id: item?.category_id ?? '', description: item?.description ?? '',
+    name: item?.name ?? '', slug: item?.slug ?? '', category_ids: item?.category_ids ?? [], description: item?.description ?? '',
     status: item?.status ?? 'DRAFT' as CatalogStatus, individually_rentable: item?.individually_rentable ?? true,
     security_deposit: item ? String(item.security_deposit.amount) : '', daily_rate: item ? String(item.daily_rate.amount) : '', buffer_class: item?.buffer_class ?? '',
   });
@@ -149,7 +179,7 @@ function ItemDialog({ item, categories, packages, onClose }: { item: AdminItem |
 
   const save = useAction(() => {
     const body: ItemInput = {
-      ...form, category_id: form.category_id || null, images: images.filter((i) => i.url.trim()), variants, prices: pricesFromForm(prices),
+      ...form, images: images.filter((i) => i.url.trim()), variants, prices: pricesFromForm(prices),
       security_deposit: vnd(Number(form.security_deposit)), daily_rate: vnd(Number(form.daily_rate)),
     };
     return adminApi.saveItem(item?.id ?? null, body);
@@ -168,12 +198,7 @@ function ItemDialog({ item, categories, packages, onClose }: { item: AdminItem |
           <Field label="Đường dẫn (slug)" required hint="Chữ thường, số, dấu gạch ngang." error={fieldError(save.error, 'slug')}>
             <Input value={form.slug} required maxLength={120} pattern="[a-z0-9]+(-[a-z0-9]+)*" onChange={(e) => set({ slug: e.target.value })} />
           </Field>
-          <Field label="Danh mục">
-            <Select value={form.category_id} onChange={(e) => set({ category_id: e.target.value })}>
-              <option value="">Không có</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </Field>
+          <CategoriesField categories={categories} value={form.category_ids} onChange={(category_ids) => set({ category_ids })} />
           <StatusSelect value={form.status} onChange={(status) => set({ status })} />
           <Field label="Tiền bảo đảm mỗi món (VND)" required><Input type="number" min={0} step={1} value={form.security_deposit} required onChange={(e) => set({ security_deposit: e.target.value })} /></Field>
           <Field label="Giá thuê/ngày (VND)" required hint="Cơ sở tính phí trả trễ."><Input type="number" min={1} step={1} value={form.daily_rate} required onChange={(e) => set({ daily_rate: e.target.value })} /></Field>
@@ -227,7 +252,7 @@ function BundlesTab({ rows, items, categories, packages }: { rows: AdminBundle[]
 
 function BundleDialog({ bundle, items, categories, packages, onClose }: { bundle: AdminBundle | null; items: AdminItem[]; categories: Category[]; packages: RentalPackage[]; onClose: () => void }) {
   const [form, setForm] = useState({
-    name: bundle?.name ?? '', slug: bundle?.slug ?? '', category_id: bundle?.category_id ?? '', description: bundle?.description ?? '',
+    name: bundle?.name ?? '', slug: bundle?.slug ?? '', category_ids: bundle?.category_ids ?? [], description: bundle?.description ?? '',
     status: bundle?.status ?? 'DRAFT' as CatalogStatus, deposit_override: bundle?.deposit_override ? String(bundle.deposit_override.amount) : '',
   });
   const [images, setImages] = useState<Image[]>(bundle?.images ?? []);
@@ -238,7 +263,7 @@ function BundleDialog({ bundle, items, categories, packages, onClose }: { bundle
 
   const save = useAction(() => {
     const body: BundleInput = {
-      ...form, category_id: form.category_id || null, images: images.filter((i) => i.url.trim()), components, prices: pricesFromForm(prices),
+      ...form, images: images.filter((i) => i.url.trim()), components, prices: pricesFromForm(prices),
       deposit_override: form.deposit_override === '' ? null : vnd(Number(form.deposit_override)),
     };
     return adminApi.saveBundle(bundle?.id ?? null, body);
@@ -255,12 +280,7 @@ function BundleDialog({ bundle, items, categories, packages, onClose }: { bundle
         <div className="form-grid">
           <Field label="Tên bộ" required><Input value={form.name} required maxLength={200} onChange={(e) => set({ name: e.target.value })} /></Field>
           <Field label="Đường dẫn (slug)" required><Input value={form.slug} required maxLength={120} pattern="[a-z0-9]+(-[a-z0-9]+)*" onChange={(e) => set({ slug: e.target.value })} /></Field>
-          <Field label="Danh mục">
-            <Select value={form.category_id} onChange={(e) => set({ category_id: e.target.value })}>
-              <option value="">Không có</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
-          </Field>
+          <CategoriesField categories={categories} value={form.category_ids} onChange={(category_ids) => set({ category_ids })} />
           <StatusSelect value={form.status} onChange={(status) => set({ status })} />
           <Field label="Tiền bảo đảm riêng cho bộ (VND)" hint="Để trống thì tính theo từng thành phần. Không thu cả hai.">
             <Input type="number" min={0} step={1} value={form.deposit_override} onChange={(e) => set({ deposit_override: e.target.value })} />
