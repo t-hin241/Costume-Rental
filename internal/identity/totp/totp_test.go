@@ -43,6 +43,22 @@ func TestVerifyAllowsOneStepOfDriftAndRefusesReplay(t *testing.T) {
 	}
 }
 
+func TestVerifyAcceptsTheWayAppsShowACode(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	secret := totp.NewSecret()
+	code := totp.Code(secret, totp.Step(now))
+	for _, typed := range []string{code[:3] + " " + code[3:], code[:3] + "-" + code[3:], " " + code + "\n", code[:3] + " " + code[3:]} {
+		if _, ok := totp.Verify(secret, typed, now, 0); !ok {
+			t.Errorf("%q was refused", typed)
+		}
+	}
+	for _, typed := range []string{code[:5], code + "1", "abc def"} {
+		if _, ok := totp.Verify(secret, typed, now, 0); ok {
+			t.Errorf("%q was accepted", typed)
+		}
+	}
+}
+
 func TestURI(t *testing.T) {
 	u := totp.URI("Webee Rentor", "a@example.test", rfcSecret)
 	if !strings.HasPrefix(u, "otpauth://totp/Webee%20Rentor:a@example.test?") || !strings.Contains(u, "secret="+totp.EncodeSecret(rfcSecret)) {

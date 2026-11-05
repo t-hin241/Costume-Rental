@@ -1,31 +1,44 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Notice, Skeleton, btn } from '../../components/ui';
 import { authApi } from '../../lib/api/endpoints';
 import { messageForCode } from '../../lib/api/errors';
-import { takeFragmentToken } from './token';
+import { clearFragmentToken, fragmentToken } from './token';
 
 type State = 'working' | 'done' | 'failed';
+
+// The link is single-use, and React may run an effect twice or mount the page
+// again, so each token is sent once and every run waits for that one answer.
+const attempts = new Map<string, Promise<void>>();
+
+function verifyOnce(token: string): Promise<void> {
+  let attempt = attempts.get(token);
+  if (!attempt) {
+    attempt = authApi.verifyEmail(token);
+    attempts.set(token, attempt);
+  }
+  return attempt;
+}
 
 export default function VerifyEmail() {
   const [state, setState] = useState<State>('working');
   const [message, setMessage] = useState('');
-  const started = useRef(false);
 
   useEffect(() => {
-    // The link is single-use and React may run effects twice in development.
-    if (started.current) return;
-    started.current = true;
-    const token = takeFragmentToken();
+    const token = fragmentToken();
+    clearFragmentToken();
     if (!token) {
       setMessage(messageForCode('identity.invalid_verification_token'));
       setState('failed');
       return;
     }
-    authApi.verifyEmail(token).then(() => setState('done'), (err: Error) => {
+    let live = true;
+    verifyOnce(token).then(() => live && setState('done'), (err: Error) => {
+      if (!live) return;
       setMessage(err.message);
       setState('failed');
     });
+    return () => { live = false; };
   }, []);
 
   return (

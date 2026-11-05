@@ -1,12 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useAction } from '../../components/feedback';
 import { Button, Field, FormError, Input, Notice, btn, fieldError } from '../../components/ui';
 import { authApi } from '../../lib/api/endpoints';
-import { takeFragmentToken } from './token';
+import { clearFragmentToken, fragmentToken } from './token';
 
 export default function ResetPassword() {
-  const [token] = useState(takeFragmentToken);
+  const [token] = useState(fragmentToken);
+  useEffect(clearFragmentToken, []);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [done, setDone] = useState(false);

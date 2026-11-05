@@ -37,13 +37,17 @@ import (
 
 func main() {
 	slog.SetDefault(slog.New(httpapi.LogHandler(slog.NewJSONHandler(os.Stdout, nil))))
-	if err := run(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx)
+	stop()
+	if err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+// run serves until ctx ends, then shuts down gracefully.
+func run(ctx context.Context) error {
 	env := envconfig.New()
 	dsn := env.Required("DATABASE_URL")
 	addr := env.String("HTTP_ADDR", ":8080")
@@ -96,9 +100,6 @@ func run() error {
 	if err != nil {
 		return err
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	pool, err := postgres.Open(ctx, postgres.Config{DSN: dsn, ConnectTimeout: 5 * time.Second, StatementTimeout: 10 * time.Second})
 	if err != nil {

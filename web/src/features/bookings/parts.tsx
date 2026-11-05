@@ -43,7 +43,7 @@ export function TransitionList({ transitions }: { transitions: BookingTransition
         <li key={`${t.at}-${i}`}>
           <strong>{transitionAction[t.action] ?? bookingStatus[t.to].label}</strong>
           <span className="cell-sub">{formatDateTime(t.at)} · {t.actor}</span>
-          {t.note && <span className="cell-sub">{t.note}</span>}
+          {t.note && <span className="cell-sub multiline">{t.note}</span>}
         </li>
       ))}
     </ol>
@@ -118,7 +118,7 @@ export function ChargeList({ finance }: { finance: BookingFinance }) {
     <ul className="stack-sm small">
       {finance.charges.map((c) => (
         <li key={c.id} className="row between">
-          <span>{chargeKind[c.kind]}{c.reason && <span className="cell-sub">{c.reason}</span>}</span>
+          <span>{chargeKind[c.kind]}{c.reason && <span className="cell-sub multiline">{c.reason}</span>}</span>
           <span className="tnum" style={c.reversed ? { textDecoration: 'line-through' } : undefined}>{formatMoney(c.amount)}{c.reversed ? ' (đã đảo)' : ''}</span>
         </li>
       ))}

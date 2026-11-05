@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -314,6 +315,12 @@ func (s *Server) respondBooking(w http.ResponseWriter, r *http.Request, p identi
 		return
 	}
 	d, err := s.svc.Rentals.View(r.Context(), p, id)
+	if errors.Is(err, identity.ErrForbidden) {
+		// The action is done. Stock staff inspect items without reading the
+		// booking, and a refusal here would say it failed.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -429,7 +436,12 @@ func (s *Server) getBooking(w http.ResponseWriter, r *http.Request, p identity.P
 		writeError(w, r, err)
 		return
 	}
-	s.respondBooking(w, r, p, id, http.StatusOK, nil)
+	d, err := s.svc.Rentals.View(r.Context(), p, id)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detailOf(d))
 }
 
 func (s *Server) cancellationPreview(w http.ResponseWriter, r *http.Request, p identity.Principal, _ identity.Session) {
@@ -622,6 +634,9 @@ func (s *Server) recordPayment(w http.ResponseWriter, r *http.Request, p identit
 		Portions       []portion       `json:"portions"`
 	}
 	withBody(s, w, r, p, func(id rentals.BookingID, in body) error {
+		if len(in.IdempotencyKey) > maxIDLength {
+			return domainerr.Invalid("idempotency_key", "at most 64 characters")
+		}
 		portions := make([]payments.Portion, 0, len(in.Portions))
 		for _, pt := range in.Portions {
 			m, err := pt.Amount.value("portions")

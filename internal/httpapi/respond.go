@@ -12,6 +12,7 @@ import (
 
 	"webee_rentor/internal/domainerr"
 	"webee_rentor/internal/identity"
+	"webee_rentor/internal/platform/postgres"
 )
 
 // apiError is a transport-level failure (bad body, rate limit, ...) that
@@ -86,6 +87,8 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 		// must (re)authenticate.
 		errors.As(err, &de)
 		detail, status = errorDetail{Code: de.Code, Message: de.Message}, http.StatusUnauthorized
+	case postgres.IsInvalidText(err):
+		detail, status = errorDetail{Code: domainerr.ErrValidation.Code, Message: domainerr.ErrValidation.Message}, http.StatusBadRequest
 	case errors.As(err, &de):
 		detail, status = errorDetail{Code: de.Code, Message: de.Message}, kindStatus[de.Kind]
 		if status == 0 {

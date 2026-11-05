@@ -60,6 +60,7 @@ type detailBody struct {
 		SecurityHeld  moneyBody `json:"security_held"`
 		Outstanding   moneyBody `json:"outstanding"`
 		RefundPending moneyBody `json:"refund_pending"`
+		RefundedTotal moneyBody `json:"refunded_total"`
 		Charges       []struct{ Kind string }
 		Payments      []struct{ Method string }
 		Refunds       []struct {
@@ -79,7 +80,12 @@ type shop struct {
 
 func newShop(t *testing.T) *shop {
 	t.Helper()
-	a := newAPI(t, options{})
+	return shopWith(t, options{})
+}
+
+func shopWith(t *testing.T, o options) *shop {
+	t.Helper()
+	a := newAPI(t, o)
 	s := &shop{api: a, c: a.f.Catalog()}
 	s.customer = s.signIn("customer")
 	s.staff = s.signIn("staff", identity.RoleRentalStaff)
@@ -369,13 +375,19 @@ func (s *shop) rented() (string, string) {
 	s.t.Helper()
 	asset := string(s.f.Assets(s.c.JacketM, 1)[0])
 	path := "/bookings/" + s.place(s.customer, "k1", "").ID
+	s.handOver(path, asset)
+	return path, asset
+}
+
+// handOver pays for a placed booking and gives its asset to the customer.
+func (s *shop) handOver(path, asset string) {
+	s.t.Helper()
 	s.act(s.money, path+"/payments", pay("p1", "CASH", map[string]int64{"RESERVATION": 15_000}))
 	s.act(s.staff, path+"/confirm", "")
 	s.act(s.staff, path+"/start-preparation", "")
 	s.act(s.money, path+"/payments", pay("p2", "CASH", map[string]int64{"RENTAL": 35_000, "SECURITY": 300_000}))
 	s.shop.Set(pgtest.Now.AddDate(0, 0, 10))
 	s.act(s.staff, path+"/handover", fmt.Sprintf(`{"checklist_completed":true,"delivered":[{"asset_id":%q,"preexisting_issues":""}]}`, asset))
-	return path, asset
 }
 
 func TestRescheduleMovesTheBookingOrLeavesItAlone(t *testing.T) {

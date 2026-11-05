@@ -117,7 +117,7 @@ function HistoryDialog({ asset, onClose }: { asset: Asset; onClose: () => void }
               <li key={`${e.at}-${i}`}>
                 <strong>{assetStatus[e.to].label}</strong>
                 <span className="cell-sub">{formatDateTime(e.at)} · {e.actor}</span>
-                {e.reason && <span className="cell-sub">{e.reason}</span>}
+                {e.reason && <span className="cell-sub multiline">{e.reason}</span>}
               </li>
             ))}
           </ol>

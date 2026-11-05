@@ -105,7 +105,7 @@ function Desk({ booking }: { booking: BookingDetail }) {
                   <div>
                     <strong>{item.name}</strong> <span className="small muted">{item.variant_label}</span>
                     <span className="cell-sub"><span className="mono">{item.asset_code}</span>{item.returned_at ? ` · Trả ${formatDateTime(item.returned_at)}` : ''}</span>
-                    {item.preexisting_issues && <span className="cell-sub">Lỗi lúc bàn giao: {item.preexisting_issues}</span>}
+                    {item.preexisting_issues && <span className="cell-sub multiline">Lỗi lúc bàn giao: {item.preexisting_issues}</span>}
                     {item.conditions.length > 0 && <span className="cell-sub">Kiểm tra: {item.conditions.map((c) => condition[c].label).join(', ')}</span>}
                   </div>
                   <div className="row" style={{ justifyContent: 'flex-end', gap: 6 }}>
@@ -126,7 +126,7 @@ function Desk({ booking }: { booking: BookingDetail }) {
               <Card title="Phí phát sinh">
                 {booking.fees.map((f) => (
                   <div key={f.id} className="item-row">
-                    <div><strong>{feeKind[f.kind]}</strong><span className="cell-sub"><span className="mono">{f.asset_code}</span> · {f.basis}</span></div>
+                    <div><strong>{feeKind[f.kind]}</strong><span className="cell-sub multiline"><span className="mono">{f.asset_code}</span> · {f.basis}</span></div>
                     <div className="row" style={{ justifyContent: 'flex-end' }}>
                       <span className="tnum strong">{formatMoney(f.amount)}</span>
                       <StatusBadge status={assessmentStatus[f.status]} />

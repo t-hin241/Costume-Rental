@@ -3,6 +3,7 @@ package pgtest
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,6 +242,80 @@ func (f *Fixture) Assets(variant catalog.VariantID, n int) []inventory.AssetID {
 		f.t.Fatal(err)
 	}
 	return out
+}
+
+// Race runs the steps at the same moment. The pool is warmed first: on a cold
+// one the first step finishes while the others are still connecting, and
+// nothing overlaps.
+func (f *Fixture) Race(steps ...func()) {
+	f.t.Helper()
+	f.warm(2*len(steps) + 2)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, step := range steps {
+		wg.Go(func() {
+			<-start
+			step()
+		})
+	}
+	close(start)
+	wg.Wait()
+}
+
+// RaceBehind is Race with a gate. It holds the rows of lockQuery, a SELECT ...
+// FOR UPDATE, until every step is waiting on a lock, then lets them all go. So
+// whatever a step checks before that lock, every step checks before any of
+// them commits: the window a plain race only hits by luck. Code that no longer
+// takes the lock simply runs past the gate, which ends the wait after a moment.
+func (f *Fixture) RaceBehind(lockQuery string, args []any, steps ...func()) {
+	f.t.Helper()
+	ctx := context.Background()
+	f.warm(2*len(steps) + 2)
+	gate, err := f.Pool.Begin(ctx)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer func() { _ = gate.Rollback(ctx) }()
+	if _, err := gate.Exec(ctx, lockQuery, args...); err != nil {
+		f.t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for _, step := range steps {
+		wg.Go(step)
+	}
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		var waiting int
+		if err := f.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting); err != nil {
+			f.t.Error(err)
+			break
+		}
+		if waiting >= len(steps) {
+			break
+		}
+	}
+	if err := gate.Rollback(ctx); err != nil {
+		f.t.Error(err)
+	}
+	wg.Wait()
+}
+
+// warm opens n connections and leaves them idle in the pool.
+func (f *Fixture) warm(n int) {
+	f.t.Helper()
+	ctx := context.Background()
+	n = min(n, int(f.Pool.Config().MaxConns))
+	conns := make([]*pgxpool.Conn, 0, n)
+	for range n {
+		c, err := f.Pool.Acquire(ctx)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		conns = append(conns, c)
+	}
+	for _, c := range conns {
+		c.Release()
+	}
 }
 
 // Date parses a fixture date.

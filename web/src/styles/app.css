@@ -75,6 +75,8 @@ table { border-collapse: collapse; width: 100%; }
 .strong { font-weight: 700; }
 .right { text-align: right; }
 .nowrap { white-space: nowrap; }
+/* Text written with line breaks: descriptions, messages. Always render it as text, never as HTML. */
+.multiline { white-space: pre-wrap; overflow-wrap: break-word; }
 .plain li + li { margin-top: 2px; }
 .bullets { list-style: disc; padding-left: 20px; }
 .link { font-weight: 600; text-decoration: underline; text-decoration-color: var(--yellow); text-decoration-thickness: 2px; text-underline-offset: 3px; }

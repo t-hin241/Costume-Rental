@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"webee_rentor/internal/businesstime"
 	"webee_rentor/internal/catalog"
@@ -143,5 +146,111 @@ func TestCancelledLedgerRoundTrip(t *testing.T) {
 	got, _, err := paymentspg.LoadLedger(ctx, f.Pool, ref, false)
 	if err != nil || !reflect.DeepEqual(got, l) {
 		t.Fatalf("round trip differs (%v):\n got %+v\nwant %+v", err, got, l)
+	}
+}
+
+// applyEvent runs one provider notification the way a webhook will: the
+// ledger locked, the event applied and saved in one transaction.
+func applyEvent(ctx context.Context, f *pgtest.Fixture, ref string, e payments.PaymentEvent) (payments.Outcome, error) {
+	var out payments.Outcome
+	err := postgres.InTx(ctx, f.Pool, func(tx pgx.Tx) error {
+		l, v, err := paymentspg.LoadLedger(ctx, tx, ref, true)
+		if err != nil {
+			return err
+		}
+		if out, err = l.ApplyPaymentEvent(e); err != nil {
+			return err
+		}
+		_, err = paymentspg.SaveLedger(ctx, tx, l, v, pgtest.Now)
+		return err
+	})
+	return out, err
+}
+
+// The provider has no webhook adapter yet, so its signature check is not
+// tested here. What the ledger stores must already survive the replays.
+func TestAProviderEventCountsOnceAcrossReplaysAndReloads(t *testing.T) {
+	ctx := context.Background()
+	f := pgtest.New(t)
+	ref := bookingRef(t, f)
+	l, v, err := paymentspg.LoadLedger(ctx, f.Pool, ref, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, _, err := l.StartGatewayPayment(payments.NewPaymentRequest{
+		ID: payments.PaymentID(f.Prefix + "-p"), IdempotencyKey: f.Prefix + "-k", Method: payments.MethodGateway, Provider: "fakepay",
+		Portions: []payments.Portion{{Bucket: payments.BucketSecurity, Amount: pgtest.VND(300_000)}},
+		Actor:    identity.SystemActor("checkout"), Now: pgtest.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := paymentspg.SaveLedger(ctx, f.Pool, l, v, pgtest.Now); err != nil {
+		t.Fatal(err)
+	}
+	event := payments.PaymentEvent{Provider: "fakepay", EventID: f.Prefix + "-e1", PaymentID: gateway.ID, ProviderTxnID: f.Prefix + "-txn",
+		Amount: gateway.Amount, Status: payments.EventSucceeded, OccurredAt: pgtest.Now}
+
+	// The provider sends the same event several times at once.
+	outcomes := make([]payments.Outcome, 5)
+	var wg sync.WaitGroup
+	for i := range outcomes {
+		wg.Go(func() {
+			outcome, err := applyEvent(ctx, f, ref, event)
+			if err != nil {
+				t.Error(err)
+			}
+			outcomes[i] = outcome
+		})
+	}
+	wg.Wait()
+	applied := 0
+	for _, o := range outcomes {
+		switch o {
+		case payments.OutcomeApplied:
+			applied++
+		case payments.OutcomeDuplicate:
+		default:
+			t.Errorf("outcome = %s", o)
+		}
+	}
+	if applied != 1 {
+		t.Fatalf("outcomes = %v, want one applied", outcomes)
+	}
+
+	// A later replay is recognised after a reload, and a forged amount or a
+	// different transaction changes nothing.
+	if got, err := applyEvent(ctx, f, ref, event); err != nil || got != payments.OutcomeDuplicate {
+		t.Fatalf("replay = %s, %v", got, err)
+	}
+	forged := event
+	forged.EventID, forged.Amount = f.Prefix+"-e2", pgtest.VND(1_000)
+	if _, err := applyEvent(ctx, f, ref, forged); !errors.Is(err, payments.ErrProviderMismatch) {
+		t.Fatalf("forged amount: err = %v", err)
+	}
+	forged = event
+	forged.EventID, forged.ProviderTxnID = f.Prefix+"-e3", f.Prefix+"-other"
+	if _, err := applyEvent(ctx, f, ref, forged); !errors.Is(err, payments.ErrProviderMismatch) {
+		t.Fatalf("another transaction: err = %v", err)
+	}
+	forged = event
+	forged.EventID, forged.Status = f.Prefix+"-e4", payments.EventFailed
+	if _, err := applyEvent(ctx, f, ref, forged); !errors.Is(err, payments.ErrInvalidTransition) {
+		t.Fatalf("failure after success: err = %v", err)
+	}
+
+	got, _, err := paymentspg.LoadLedger(ctx, f.Pool, ref, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := got.Summary(); s.SecurityReceived.Amount() != 300_000 || s.TotalReceived.Amount() != 300_000 {
+		t.Fatalf("received = %+v", s)
+	}
+	var stored int
+	if err := f.Pool.QueryRow(ctx, `SELECT count(*) FROM provider_events WHERE booking_id = $1`, ref).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != 1 {
+		t.Fatalf("%d events stored", stored)
 	}
 }

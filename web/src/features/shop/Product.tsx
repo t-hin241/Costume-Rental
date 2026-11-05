@@ -121,7 +121,7 @@ function ProductView({ offering }: { offering: OfferingDetail }) {
           {isBundle && <Badge tone="brand" label="Thuê nguyên bộ" />}
           <span className="small muted">Tiền bảo đảm <strong><MoneyText value={offering.security_deposit} /></strong></span>
         </div>
-        {offering.description && <p className="muted" style={{ marginTop: 12 }}>{offering.description}</p>}
+        {offering.description && <p className="muted multiline" style={{ marginTop: 12 }}>{offering.description}</p>}
 
         <section className="pdp-section stack" aria-label="Chọn size">
           <h2>{isBundle ? 'Chọn size từng món trong bộ' : 'Chọn size'}</h2>

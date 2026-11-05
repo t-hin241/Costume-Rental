@@ -107,6 +107,13 @@ func IsUniqueViolation(err error, constraint string) bool {
 	return errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == constraint
 }
 
+// IsInvalidText reports whether the database refused a value as text (SQLSTATE
+// 22021): a NUL character or broken UTF-8, which only a client can have sent.
+func IsInvalidText(err error) bool {
+	var pg *pgconn.PgError
+	return errors.As(err, &pg) && pg.Code == "22021"
+}
+
 // NotFound maps pgx.ErrNoRows to ErrNotFound with context.
 func NotFound(err error, what string) error {
 	if errors.Is(err, pgx.ErrNoRows) {

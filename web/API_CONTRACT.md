@@ -52,7 +52,7 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 
 | Phương thức, đường dẫn | Quyền |
 |---|---|
-| `POST /bookings` (bắt buộc `request_key`) | `booking.create_own` |
+| `POST /bookings` (bắt buộc `request_key`, tối đa 64 ký tự) | `booking.create_own`. Gửi lại cùng key, kể cả đồng thời, trả về đơn đã tạo. Đã có `max_unpaid_holds` đơn đang giữ hàng chưa thu đồng nào thì trả `409 rentals.too_many_unpaid_holds`; thanh toán, hủy hoặc hết hạn giữ hàng thì đơn đó thôi được tính |
 | `GET /me/bookings?scope=active\|history` | `booking.read_own` |
 | `GET /bookings/{id}` | own hoặc `booking.read_all` |
 | `GET /bookings/{id}/cancellation-preview?reason=` | own hoặc `booking.cancel_any`. Khách luôn thấy điều khoản của khách; nhân viên truyền `NO_SHOW` hoặc `STAFF_DECISION`. Chạy đúng luật hủy thật, không lưu gì. Thời gian báo trước tính đến ngày nhận sớm nhất đơn từng có, không phải `pickup_at` hiện tại |
@@ -72,10 +72,10 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | `POST /bookings/{id}/returns` | `rental.return_receive` |
 | `POST /bookings/{id}/report-missing` | `rental.return_receive` |
 | `POST /bookings/{id}/confirm-lost` | `rental.confirm_lost` |
-| `POST /bookings/{id}/inspections` | `rental.return_inspect` |
+| `POST /bookings/{id}/inspections` | `rental.return_inspect`. Người không có quyền đọc đơn (quản lý kho) nhận `204`, không có body |
 | `POST /bookings/{id}/fees` | `fee.assess` |
 | `POST /bookings/{id}/fees/{fee}/decision` | `fee.approve`, `fee.waive` |
-| `POST /bookings/{id}/payments` (có `idempotency_key`) | `payment.record` |
+| `POST /bookings/{id}/payments` (có `idempotency_key`, tối đa 64 ký tự) | `payment.record` |
 | `POST /bookings/{id}/refunds/{refund}/approve`, `/reject` | `refund.approve` |
 | `POST /bookings/{id}/refunds/{refund}/payout` | `payment.record` |
 | `POST /bookings/{id}/settle` | `refund.create` |

@@ -15,7 +15,7 @@ export function SupportThread({ request }: { request: SupportRequest }) {
         <li key={`${m.at}-${i}`}>
           <strong>{m.author}</strong>
           <span className="cell-sub">{formatDateTime(m.at)}</span>
-          <p className="small" style={{ marginTop: 2, whiteSpace: 'pre-wrap' }}>{m.body}</p>
+          <p className="small multiline" style={{ marginTop: 2 }}>{m.body}</p>
         </li>
       ))}
     </ol>

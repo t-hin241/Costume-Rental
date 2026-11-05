@@ -65,11 +65,14 @@ func Code(secret []byte, step int64) string {
 	return fmt.Sprintf("%0*d", digits, v%1_000_000)
 }
 
+// codeSeparators are what apps put inside a code they display or copy ("123 456").
+var codeSeparators = strings.NewReplacer(" ", "", "-", "", "\t", "", " ", "")
+
 // Verify checks code against the steps around now and returns the step it
 // matched. Steps at or before lastUsed are refused, so an accepted code
 // cannot be replayed.
 func Verify(secret []byte, code string, now time.Time, lastUsed int64) (int64, bool) {
-	code = strings.TrimSpace(code)
+	code = codeSeparators.Replace(strings.TrimSpace(code))
 	if len(code) != digits {
 		return 0, false
 	}
