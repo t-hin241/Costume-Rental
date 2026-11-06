@@ -1,0 +1,12 @@
+#!/bin/sh
+# docker compose for the staging stack, from anywhere in the repository:
+#   deploy/staging/dc up -d
+#   deploy/staging/dc logs -f api
+set -eu
+root=$(cd "$(dirname "$0")/../.." && pwd)
+env_file=${STAGING_ENV_FILE:-$root/.env.staging}
+if [ ! -f "$env_file" ]; then
+	echo "missing $env_file: copy deploy/staging/env.example and fill it in" >&2
+	exit 1
+fi
+exec docker compose --project-directory "$root" -f "$root/compose.staging.yaml" --env-file "$env_file" "$@"

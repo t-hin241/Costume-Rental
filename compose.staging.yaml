@@ -1,0 +1,166 @@
+# Staging stack for one VM (decisions S-01..S-08, runbook in
+# deploy/staging/README.md). Not the local stack: no host port at all, traffic
+# arrives only through the Cloudflare Tunnel from the staging-edge Worker
+# (HTTPS, Cloudflare Access), and email goes to real SMTP with TLS.
+#
+# Always run it through deploy/staging/dc, which adds --env-file .env.staging.
+# Each container gets only the variables listed here; the secrets file never
+# enters an image.
+name: webee-staging
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+x-api: &api
+  image: webee-rentor-api:staging
+  environment: &database
+    DATABASE_URL: postgres://webee:${WEBEE_DB_PASSWORD:?set it in .env.staging}@postgres:5432/webee_rentor?sslmode=disable
+  logging: *logging
+  networks: [webee]
+
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env.staging}
+      WEBEE_DB_PASSWORD: ${WEBEE_DB_PASSWORD:?set it in .env.staging}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, webee, -d, webee_rentor]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    networks: [webee]
+
+  migrate:
+    <<: *api
+    command: [/app/migrate]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # By hand only (see the runbook): activating the file's version on every
+  # `up` would silently replace a policy published from the admin screens.
+  # config/ is git-ignored, so it is copied to the VM separately.
+  policy:
+    <<: *api
+    profiles: [tools]
+    entrypoint: [/app/policy]
+    command: [-file, /config/policy.yaml]
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  bootstrap-admin:
+    <<: *api
+    profiles: [tools]
+    entrypoint: [/app/bootstrap-admin]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    <<: *api
+    build:
+      context: .
+      target: api
+    restart: unless-stopped
+    environment:
+      <<: *database
+      AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:?set it in .env.staging}
+      AUTH_MFA_ISSUER: ${AUTH_MFA_ISSUER:-Webee Rental (staging)}
+      HTTP_COOKIE_SECURE: "true"
+      # nginx, then cloudflared: the Worker sets X-Forwarded-For to the client,
+      # so it arrives as "client, cloudflared".
+      HTTP_TRUSTED_PROXIES: 172.30.78.10,172.30.78.11
+      # The site's own origin. Same-origin requests pass anyway; naming it keeps
+      # CSRF working even if a header changes on the way through the Worker.
+      HTTP_TRUSTED_ORIGINS: https://${STAGING_HOST:?set it in .env.staging}
+      APP_BASE_URL: https://${STAGING_HOST:?set it in .env.staging}
+      MEDIA_DIR: /data/media
+      SMTP_HOST: ${SMTP_HOST:?set it in .env.staging}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:?set it in .env.staging}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
+      SHOP_NAME: ${SHOP_NAME:-Webee Rental (staging)}
+      SHOP_ADDRESS: ${SHOP_ADDRESS:-}
+      SHOP_PHONE: ${SHOP_PHONE:-}
+      SHOP_EMAIL: ${SHOP_EMAIL:-}
+      SHOP_HOURS: ${SHOP_HOURS:-}
+      SHOP_PAYMENT_INSTRUCTIONS: ${SHOP_PAYMENT_INSTRUCTIONS:-}
+    volumes:
+      - media-data:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/readyz]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    # Longer than the server's own 20s graceful shutdown.
+    stop_grace_period: 25s
+
+  web:
+    image: webee-rentor-web:staging
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    networks:
+      webee:
+        ipv4_address: 172.30.78.10
+
+  # Outbound-only connector of the Cloudflare Tunnel. The tunnel has no public
+  # hostname: only the staging-edge Worker reaches web (172.30.78.10:8080)
+  # through its Workers VPC binding, after Cloudflare Access let the user in.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.3
+    restart: unless-stopped
+    command: [tunnel, --no-autoupdate, run]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set it in .env.staging}
+    depends_on:
+      web:
+        condition: service_healthy
+    logging: *logging
+    networks:
+      webee:
+        # Fixed so HTTP_TRUSTED_PROXIES can name the proxies and nothing else.
+        ipv4_address: 172.30.78.11
+
+volumes:
+  postgres-data:
+  media-data:
+
+networks:
+  webee:
+    ipam:
+      config:
+        - subnet: 172.30.78.0/24

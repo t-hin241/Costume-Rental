@@ -1,0 +1,45 @@
+// Staging edge (decisions S-02, S-03, S-05, S-08 in deploy/staging/README.md).
+// The ids below are placeholders: replace them with the ones the Cloudflare
+// dashboard or wrangler prints for your account. They are identifiers, not
+// secrets; the secrets go in with `npx wrangler secret put`:
+//   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webee-staging-edge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+
+  // Only the workers.dev URL, behind Cloudflare Access. Preview URLs stay off
+  // so there is no second way in.
+  "workers_dev": true,
+  "preview_urls": false,
+
+  "observability": { "enabled": true },
+
+  // Monitor: origin readiness and backup freshness every five minutes.
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  // HTTP VPC Service: the Cloudflare Tunnel, host 172.30.78.10 (the web
+  // container), HTTP port 8080.
+  "vpc_services": [
+    { "binding": "ORIGIN", "service_id": "00000000-0000-0000-0000-000000000000" }
+  ],
+  "r2_buckets": [
+    { "binding": "BACKUPS", "bucket_name": "webee-staging-backups" }
+  ],
+  // Last alert state only, so each problem is announced once.
+  "kv_namespaces": [
+    { "binding": "STATE", "id": "00000000000000000000000000000000" }
+  ],
+
+  "vars": {
+    // Zero Trust team domain, e.g. webee.cloudflareaccess.com.
+    "ACCESS_TEAM_DOMAIN": "example-team.cloudflareaccess.com",
+    // Application Audience (AUD) tag of the Access application that protects
+    // this Worker. Empty means every request is refused.
+    "ACCESS_AUD": "",
+    // Key prefix of the backups in the bucket ("" when rclone copies to the root).
+    "BACKUP_PREFIX": "",
+    "BACKUP_MAX_AGE_HOURS": "26"
+  }
+}
