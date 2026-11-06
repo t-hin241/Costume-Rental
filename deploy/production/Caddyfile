@@ -1,0 +1,65 @@
+# TLS front of the public stack (compose.production.yaml, decision P-03).
+# PUBLIC_HOST is a public IPv4 address or a domain name, without https://.
+# The values come from the container environment, filled from .env.production.
+{
+	# No admin API: nothing in the stack needs it. Change this file, then
+	# `sh deploy/production/dc restart caddy`.
+	admin off
+
+	# Let's Encrypt, short-lived profile: the only one that issues certificates
+	# for an IP address (6 days, renewed automatically about every 3 days). A
+	# domain name gets one from the same profile, which does no harm.
+	cert_issuer acme {
+		dir {$ACME_CA}
+		profile shortlived
+	}
+
+	# Browsers send no SNI to an IP address, and inside Docker the local
+	# address is the container's, so name the certificate to use for them.
+	default_sni {$PUBLIC_HOST}
+
+	servers {
+		timeouts {
+			read_header 10s
+			# Uploads up to MEDIA_MAX_BYTES on a slow line.
+			read_body 60s
+			write 60s
+			idle 2m
+		}
+		max_header_size 32KB
+	}
+}
+
+{$PUBLIC_HOST} {
+	# JSON access log on stdout (docker logs). Cookie and Authorization
+	# headers are redacted by Caddy unless log_credentials is set: never set it.
+	log {
+		output stdout
+		format json
+	}
+
+	# MEDIA_MAX_BYTES (5 MiB) plus multipart overhead; nginx enforces 6m too.
+	request_body {
+		max_size 7MB
+	}
+
+	header {
+		# HSTS on pages too; "?" keeps the API's own header where it sends one.
+		# Browsers ignore HSTS for an IP address; it applies once a domain is used.
+		?Strict-Transport-Security "max-age=31536000"
+		# Demo (decision P-06): keep the site out of search engines. Set
+		# ROBOTS_TAG=all in .env.production to allow indexing.
+		X-Robots-Tag "{$ROBOTS_TAG}"
+		-Server
+	}
+
+	# Caddy ignores X-Forwarded-For from clients and writes the real address;
+	# the Host header passes through unchanged for the API's origin checks.
+	reverse_proxy web:8080 {
+		transport http {
+			dial_timeout 5s
+			# Longer than nginx's own 35s API read timeout.
+			response_header_timeout 40s
+		}
+	}
+}

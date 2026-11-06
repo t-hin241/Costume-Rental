@@ -13,6 +13,15 @@ data_scrape/
 .env.*
 .env.example
 config/
+# Never committed even if left behind by a runbook step: the bootstrap-admin
+# password file, TLS/private keys, database dumps, rclone credentials.
+password.txt
+*.pem
+*.key
+*.p12
+*.pfx
+*.dump
+rclone.conf
 
 # Editors / OS
 .idea/

@@ -1,3 +1,6 @@
 # Shell scripts run inside Linux containers, whatever the checkout platform.
 *.sh text eol=lf
 deploy/staging/dc text eol=lf
+deploy/production/dc text eol=lf
+# Caddy reads it inside a Linux container.
+Caddyfile text eol=lf

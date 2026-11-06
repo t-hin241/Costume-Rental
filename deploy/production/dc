@@ -1,0 +1,66 @@
+#!/bin/sh
+# docker compose for the public stack, from anywhere in the repository:
+#   sh deploy/production/dc up -d
+#   sh deploy/production/dc logs -f api
+# Refuses to run when PUBLIC_HOST cannot get a public certificate, so a typo
+# does not end in a stack that redirects everyone to a wrong address.
+set -eu
+root=$(cd "$(dirname "$0")/../.." && pwd)
+env_file=${PRODUCTION_ENV_FILE:-$root/.env.production}
+if [ ! -f "$env_file" ]; then
+	echo "missing $env_file: copy deploy/production/env.example and fill it in" >&2
+	exit 1
+fi
+
+fail() {
+	echo "PUBLIC_HOST=$host in $env_file: $1" >&2
+	exit 1
+}
+
+host=$(sed -n 's/^PUBLIC_HOST=//p' "$env_file" | tail -n 1 | tr -d '\r' |
+	sed "s/^'\(.*\)'\$/\1/; s/^\"\(.*\)\"\$/\1/")
+[ -n "$host" ] || fail "empty"
+case $host in
+*://* | */* | *:*) fail "write only the address or domain, without https://, a port or a path" ;;
+esac
+
+# A function, so that splitting the address does not replace the compose
+# arguments in "$@".
+check_ipv4() {
+	old_ifs=$IFS
+	IFS=.
+	# shellcheck disable=SC2086 # split on the dots on purpose
+	set -- $1
+	IFS=$old_ifs
+	for octet in "$@"; do
+		case $octet in 0?*) fail "no leading zeros" ;; esac
+		[ "$octet" -le 255 ] || fail "not an IPv4 address"
+	done
+	# Let's Encrypt only issues for addresses reachable from the Internet.
+	# 100.64.0.0/10 is carrier-grade NAT: the ISP shares that address, so port
+	# forwarding on your router cannot work; ask the ISP for a public IP.
+	if [ "$1" -eq 0 ] || [ "$1" -eq 10 ] || [ "$1" -eq 127 ] || [ "$1" -ge 224 ] ||
+		{ [ "$1" -eq 100 ] && [ "$2" -ge 64 ] && [ "$2" -le 127 ]; } ||
+		{ [ "$1" -eq 169 ] && [ "$2" -eq 254 ]; } ||
+		{ [ "$1" -eq 172 ] && [ "$2" -ge 16 ] && [ "$2" -le 31 ]; } ||
+		{ [ "$1" -eq 192 ] && [ "$2" -eq 168 ]; }; then
+		fail "a private, loopback or carrier-grade NAT address cannot be reached from the Internet; use the router's public (WAN) address"
+	fi
+}
+
+if printf '%s\n' "$host" | grep -Eq '^[0-9]+(\.[0-9]+){3}$'; then
+	check_ipv4 "$host"
+elif ! printf '%s\n' "$host" | grep -Eq '^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$'; then
+	fail "neither an IPv4 address nor a domain name (IPv6 is not supported here)"
+fi
+
+# Git Bash on Windows (trial runs, README section 9): stop it from rewriting
+# container paths such as /data/media into Windows paths, and hand docker.exe
+# Windows paths for the files on this side instead. No effect on Linux.
+if command -v cygpath >/dev/null 2>&1; then
+	export MSYS_NO_PATHCONV=1
+	root=$(cygpath -m "$root")
+	env_file=$(cygpath -m "$env_file")
+fi
+
+exec docker compose --project-directory "$root" -f "$root/compose.production.yaml" --env-file "$env_file" "$@"

@@ -1,0 +1,213 @@
+# Public stack for one Linux server behind the owner's router (runbook and
+# decisions P-01..P-07 in deploy/production/README.md). Purpose today: a demo
+# on the Internet with fake data only.
+#
+#   Internet ─80/443→ caddy (TLS, Let's Encrypt) ─→ web (nginx) ─/api/→ api ─→ postgres
+#
+# Only caddy publishes ports. Three networks keep each hop to its neighbours:
+#   edge: caddy + web            (caddy needs the Internet for ACME)
+#   app:  web + api              (api needs the Internet for SMTP)
+#   db:   api + postgres + tools (internal: no route to the Internet at all)
+#
+# Always run it through deploy/production/dc, which checks PUBLIC_HOST and adds
+# --env-file .env.production. Each container gets only the variables listed
+# here; the secrets file never enters an image.
+name: webee-production
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+# Containers that need no privilege at all: no capabilities, read-only root
+# filesystem, scratch space in memory only.
+x-hardened: &hardened
+  restart: unless-stopped
+  logging: *logging
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: [/tmp]
+
+x-api: &api
+  <<: *hardened
+  image: webee-rentor-api:production
+  environment: &database
+    DATABASE_URL: postgres://webee:${WEBEE_DB_PASSWORD:?set it in .env.production}@postgres:5432/webee_rentor?sslmode=disable
+  networks: [db]
+
+x-tool: &tool
+  <<: *api
+  restart: "no"
+
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    restart: unless-stopped
+    # Keeps its default capabilities: the entrypoint chowns the data folder and
+    # then drops to the postgres user.
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env.production}
+      WEBEE_DB_PASSWORD: ${WEBEE_DB_PASSWORD:?set it in .env.production}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, webee, -d, webee_rentor]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    networks: [db]
+
+  migrate:
+    <<: *tool
+    command: [/app/migrate]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # By hand only (see the runbook): activating the file's version on every
+  # `up` would silently replace a policy published from the admin screens.
+  # config/ is git-ignored, so it is copied to the server separately.
+  policy:
+    <<: *tool
+    profiles: [tools]
+    entrypoint: [/app/policy]
+    command: [-file, /config/policy.yaml]
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  bootstrap-admin:
+    <<: *tool
+    profiles: [tools]
+    entrypoint: [/app/bootstrap-admin]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    <<: *api
+    build:
+      context: .
+      target: api
+    environment:
+      <<: *database
+      AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:?set it in .env.production}
+      AUTH_MFA_ISSUER: ${AUTH_MFA_ISSUER:-Webee Rental}
+      HTTP_COOKIE_SECURE: "true"
+      # nginx (the TCP peer, app network) and caddy (edge network). Caddy drops
+      # any X-Forwarded-For a client sends and writes the client address, nginx
+      # appends caddy's, so the API reads "client, caddy".
+      HTTP_TRUSTED_PROXIES: 172.30.80.10,172.30.79.11
+      # The site's own origin. Same-origin requests pass anyway; naming it keeps
+      # CSRF working if a proxy ever rewrites a header.
+      HTTP_TRUSTED_ORIGINS: https://${PUBLIC_HOST:?set it in .env.production}
+      APP_BASE_URL: https://${PUBLIC_HOST:?set it in .env.production}
+      MEDIA_DIR: /data/media
+      SMTP_HOST: ${SMTP_HOST:?set it in .env.production}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:?set it in .env.production}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
+      SHOP_NAME: ${SHOP_NAME:-Webee Rental}
+      SHOP_ADDRESS: ${SHOP_ADDRESS:-}
+      SHOP_PHONE: ${SHOP_PHONE:-}
+      SHOP_EMAIL: ${SHOP_EMAIL:-}
+      SHOP_HOURS: ${SHOP_HOURS:-}
+      SHOP_PAYMENT_INSTRUCTIONS: ${SHOP_PAYMENT_INSTRUCTIONS:-}
+    volumes:
+      - media-data:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/readyz]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    # Longer than the server's own 20s graceful shutdown.
+    stop_grace_period: 25s
+    networks:
+      app:
+      db:
+
+  web:
+    <<: *hardened
+    image: webee-rentor-web:production
+    build:
+      context: .
+      target: web
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    networks:
+      edge:
+        ipv4_address: 172.30.79.10
+      app:
+        # Fixed so HTTP_TRUSTED_PROXIES can name the proxies and nothing else.
+        ipv4_address: 172.30.80.10
+
+  # The only container with published ports. Port 80 answers the HTTP-01
+  # challenge and redirects everything else to HTTPS; 443/udp is HTTP/3.
+  caddy:
+    <<: *hardened
+    image: caddy:2.11.9-alpine
+    # Runs as root inside the container only to bind 80/443; every other
+    # capability is dropped.
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set it in .env.production}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+      ROBOTS_TAG: ${ROBOTS_TAG:-noindex, nofollow}
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    volumes:
+      - ./deploy/production/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account: losing them means asking Let's
+      # Encrypt again, which is rate limited.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: 172.30.79.11
+
+volumes:
+  postgres-data:
+  media-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.79.0/24
+  app:
+    ipam:
+      config:
+        - subnet: 172.30.80.0/24
+  db:
+    internal: true
