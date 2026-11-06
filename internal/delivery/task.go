@@ -22,8 +22,8 @@ const (
 	Return   Direction = "RETURN"   // customer → store
 )
 
-// Status is the internal task status (policy §8). Carrier codes are mapped to
-// these by the adapter and never leak into the domain.
+// Status is the internal task status (policy §8). Staff map what the
+// carrier's app shows to these; carrier codes never leak into the domain.
 type Status string
 
 const (

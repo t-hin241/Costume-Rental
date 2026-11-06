@@ -110,7 +110,8 @@ type Zone struct {
 	Active        bool
 }
 
-// Ward is a carrier ward code with the name customers pick from.
+// Ward is a ward the store serves: an internal code and the name customers
+// pick from.
 type Ward struct {
 	Code string
 	Name string

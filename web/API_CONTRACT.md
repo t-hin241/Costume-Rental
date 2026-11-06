@@ -137,7 +137,7 @@ Quyền là quyền trong `identity`. "own" là chủ đơn. Truy cập đơn c�
 | Phần | Hành vi hiện tại | Cần gì để chạy |
 |---|---|---|
 | Thanh toán trực tuyến | `online_payment_available: false`, `payment_options` rỗng. `POST /bookings/{id}/payment-sessions` và `GET /payment-sessions/{id}` trả `409 payments.gateway_unavailable`. Khách thanh toán tại quầy hoặc chuyển khoản, nhân viên ghi nhận | Chọn nhà cung cấp cổng, viết adapter và webhook (mục 4) |
-| Giao nhận tận nơi | Chạy ở chế độ thủ công (D43) khi đã nạp `config/delivery.yaml`; file hiện còn `???` (mã phường, địa chỉ cửa hàng) nên chưa bật. Chưa có webhook, chưa có khiếu nại sau khi nhận (D20) và đối soát cước | Điền cấu hình rồi chạy `cmd/policy -delivery`; adapter GHN và webhook khi có tài khoản sandbox |
+| Giao nhận tận nơi | Chạy ở chế độ thủ công (D43) khi đã nạp `config/delivery.yaml`; file hiện còn `???` (mã phường, địa chỉ cửa hàng) nên chưa bật. Không tích hợp hãng vận chuyển (D44). Chưa có khiếu nại sau khi nhận (D20) và đối soát cước | Điền cấu hình rồi chạy `cmd/policy -delivery` |
 | Ưu đãi thành viên | Form không cho tạo `MEMBER_DISCOUNT` vì cần phân khúc khách | Định nghĩa phân khúc |
 
 ## 4. Thanh toán trực tuyến

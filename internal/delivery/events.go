@@ -11,9 +11,9 @@ import (
 	"webee_rentor/internal/money"
 )
 
-// CarrierEvent is a carrier status update already authenticated and mapped
-// to an internal status by the adapter. Key is the provider event id, or
-// shipment code + type + time + payload hash when the provider has none.
+// CarrierEvent is a status update of a shipment, recorded by staff from the
+// carrier's app (decision D43: no carrier integration). Key makes recording
+// the same update twice a no-op.
 type CarrierEvent struct {
 	Provider       string
 	ShipmentCode   string

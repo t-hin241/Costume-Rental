@@ -14,7 +14,7 @@ import (
 )
 
 // Delivery runs in manual mode (decision D43): staff book shipments in the
-// carrier's app and record here what happens. There is no carrier webhook yet.
+// carrier's app and record here what happens. There is no carrier integration.
 
 type addressDTO struct {
 	RecipientName string `json:"recipient_name"`
