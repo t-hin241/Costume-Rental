@@ -5,7 +5,7 @@
 !go.sum
 !cmd/
 !internal/
-!deploy/nginx/
+!docker/nginx/
 !web/
 
 **/*_test.go

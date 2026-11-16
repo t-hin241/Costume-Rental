@@ -88,13 +88,13 @@ cmd/
 internal/            các module domain và hạ tầng (platform/)
   platform/postgres/migrations/   migration SQL có đánh số phiên bản
 web/                 giao diện React
-deploy/
-  nginx/             cấu hình web server và header bảo mật
-  production/        stack public trên một server Linux
-  staging/           stack staging trên Oracle Cloud + Cloudflare
-  cloudflare/        Worker kiểm soát truy cập staging
+docker/
+  nginx/             cấu hình web server và header bảo mật của image web
+  postgres/          script tạo role ứng dụng khi khởi tạo database
 compose.yaml         stack chạy thử trên máy cá nhân
 ```
+
+Cấu hình triển khai (`deploy/`, `compose.staging.yaml`, `compose.production.yaml`) chỉ có trên branch `develop`, xem mục [Triển khai](#triển-khai).
 
 ## Chạy thử trên máy
 
@@ -140,8 +140,10 @@ npm run build
 
 ## Triển khai
 
-- [deploy/production/README.md](deploy/production/README.md): một server Linux sau router, HTTPS bằng Let's Encrypt cho IP public hoặc domain, backup và diễn tập khôi phục.
-- [deploy/staging/README.md](deploy/staging/README.md): VM Oracle Cloud không mở cổng ra ngoài, truy cập qua Cloudflare Tunnel và Access, có giám sát và backup lên R2.
+Cấu hình và runbook triển khai nằm trên branch `develop`, không có trên `main`:
+
+- [deploy/production/README.md](https://github.com/t-hin241/Costume-Rental/blob/develop/deploy/production/README.md): một server Linux sau router, HTTPS bằng Let's Encrypt cho IP public hoặc domain, backup và diễn tập khôi phục.
+- [deploy/staging/README.md](https://github.com/t-hin241/Costume-Rental/blob/develop/deploy/staging/README.md): VM Oracle Cloud không mở cổng ra ngoài, truy cập qua Cloudflare Tunnel và Access, có giám sát và backup lên R2.
 
 Migration chạy bằng `cmd/migrate` trước khi nhận traffic. Không sửa migration đã triển khai, chỉ thêm migration mới.
 

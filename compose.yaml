@@ -22,7 +22,7 @@ services:
       WEBEE_DB_PASSWORD: ${WEBEE_DB_PASSWORD:?set it in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./deploy/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+      - ./docker/postgres/init-app-role.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
     healthcheck:
       # TCP on purpose: while the image initialises, its temporary server
       # listens on the socket only, so this cannot pass before the role exists.

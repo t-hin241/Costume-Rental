@@ -9,6 +9,26 @@ permissions:
   contents: read
 
 jobs:
+  # Deployment files (deploy/, compose.staging.yaml, compose.production.yaml)
+  # live on develop only. A merge into main must leave them out.
+  main-layout:
+    name: No deployment files on main
+    if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the tree
+        run: |
+          found=0
+          for p in deploy compose.staging.yaml compose.production.yaml; do
+            if [ -e "$p" ]; then
+              echo "::error::$p must not be on main (it belongs to develop)"
+              found=1
+            fi
+          done
+          exit "$found"
+
   integration:
     name: Integration tests
     runs-on: ubuntu-latest

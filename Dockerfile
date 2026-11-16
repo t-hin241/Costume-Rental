@@ -27,6 +27,6 @@ COPY web/ ./
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.31.7-alpine3.24 AS web
-COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY deploy/nginx/security-headers.conf /etc/nginx/security-headers.conf
+COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx/security-headers.conf /etc/nginx/security-headers.conf
 COPY --from=web-build /src/dist/ /usr/share/nginx/html/
