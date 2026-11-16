@@ -33,3 +33,6 @@ Thumbs.db
 docs/
 AGENTS.md
 restore_key.md
+# Tooling output anywhere (e.g. the staging edge Worker on develop)
+node_modules/
+.wrangler/
