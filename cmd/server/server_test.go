@@ -180,19 +180,27 @@ func signUp(t *testing.T, f *pgtest.Fixture, base string, n int, roles ...identi
 	return p
 }
 
-// bookableDate is a pickup day a few days ahead whose next day is open too.
-func bookableDate(t *testing.T, after int) string {
+// today is the current day in business time.
+func today(t *testing.T) time.Time {
 	t.Helper()
 	loc, err := businesstime.LoadLocation()
 	if err != nil {
 		t.Fatal(err)
 	}
+	return time.Now().In(loc)
+}
+
+// bookableDate is a pickup day at least after days past from whose next day is
+// open too (pgtest.SeedConfig: closed on Sundays and on 2026-11-20). Counting
+// from an earlier pickup, not from today, keeps two bookings apart whatever
+// closures pushed the first one forward.
+func bookableDate(from time.Time, after int) time.Time {
 	open := func(d time.Time) bool { return d.Weekday() != time.Sunday && d.Format(time.DateOnly) != "2026-11-20" }
-	d := time.Now().In(loc).AddDate(0, 0, after)
+	d := from.AddDate(0, 0, after)
 	for !open(d) || !open(d.AddDate(0, 0, 1)) {
 		d = d.AddDate(0, 0, 1)
 	}
-	return d.Format(time.DateOnly)
+	return d
 }
 
 // raceAll runs the requests at once and counts the answers by status.
@@ -228,9 +236,10 @@ func TestTheRealServerKeepsItsPromises(t *testing.T) {
 	f := pgtest.New(t)
 	c := f.Catalog()
 	f.Assets(c.JacketM, 1)
-	order := func(date, key string) string {
+	order := func(date time.Time, key string) string {
 		return fmt.Sprintf(`{"package_id":%q,"pickup_date":%q,"slot_id":"morning","outbound":"STORE","return":"STORE",
-			"lines":[{"kind":"ITEM","offering_id":%q,"variant_id":%q,"quantity":1}],"request_key":%q}`, c.OneDay.ID, date, c.Jacket.ID, c.JacketM, key)
+			"lines":[{"kind":"ITEM","offering_id":%q,"variant_id":%q,"quantity":1}],"request_key":%q}`,
+			c.OneDay.ID, date.Format(time.DateOnly), c.Jacket.ID, c.JacketM, key)
 	}
 	crowd := make([]person, 24)
 	for i := range crowd {
@@ -239,7 +248,7 @@ func TestTheRealServerKeepsItsPromises(t *testing.T) {
 	staff := signUp(t, f, base, 100, identity.RoleRentalStaff)
 	guest := person{t: t, base: base, address: "198.51.200.1"}
 
-	date := bookableDate(t, 3)
+	date := bookableDate(today(t), 3)
 	calls := make([]func() (int, []byte), len(crowd))
 	for i, p := range crowd {
 		calls[i] = func() (int, []byte) { return p.do("POST", "/bookings", order(date, fmt.Sprint("k", i))) }
@@ -319,7 +328,9 @@ func TestTheRealServerKeepsItsPromises(t *testing.T) {
 	}
 	// The job runs once a minute in the server itself: an unpaid hold that ran
 	// out gives the item back, without anyone asking.
-	later := bookableDate(t, 9)
+	// Six days after the first pickup: clear of its one-day rental, its
+	// turnaround buffer and this booking's preparation buffer.
+	later := bookableDate(date, 6)
 	left := crowd[(winner+2)%len(crowd)]
 	var hold struct {
 		ID string `json:"id"`
