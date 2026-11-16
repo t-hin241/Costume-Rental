@@ -94,7 +94,6 @@ docker/
 compose.yaml         stack chạy thử trên máy cá nhân
 ```
 
-Cấu hình triển khai (`deploy/`, `compose.staging.yaml`, `compose.production.yaml`) chỉ có trên branch `develop`, xem mục [Triển khai](#triển-khai).
 
 ## Chạy thử trên máy
 
