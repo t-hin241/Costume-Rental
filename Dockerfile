@@ -3,7 +3,7 @@
 #   web: the built frontend behind nginx, which also proxies /api/ to the server
 # Neither image holds configuration or credentials; they come from the environment.
 
-FROM golang:1.27.3-alpine3.24 AS api-build
+FROM golang:1.27.4-alpine3.24 AS api-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

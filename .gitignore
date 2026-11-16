@@ -11,7 +11,7 @@ data_scrape/
 # Local environment and secrets (commit only .env.example with fake values)
 .env
 .env.*
-.env.example
+!.env.example
 config/
 # Never committed even if left behind by a runbook step: the bootstrap-admin
 # password file, TLS/private keys, database dumps, rclone credentials.
