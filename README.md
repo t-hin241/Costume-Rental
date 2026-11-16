@@ -138,23 +138,3 @@ npm test
 npm run build
 ```
 
-## Triển khai
-
-Cấu hình và runbook triển khai nằm trên branch `develop`, không có trên `main`:
-
-- [deploy/production/README.md](https://github.com/t-hin241/Costume-Rental/blob/develop/deploy/production/README.md): một server Linux sau router, HTTPS bằng Let's Encrypt cho IP public hoặc domain, backup và diễn tập khôi phục.
-- [deploy/staging/README.md](https://github.com/t-hin241/Costume-Rental/blob/develop/deploy/staging/README.md): VM Oracle Cloud không mở cổng ra ngoài, truy cập qua Cloudflare Tunnel và Access, có giám sát và backup lên R2.
-
-Migration chạy bằng `cmd/migrate` trước khi nhận traffic. Không sửa migration đã triển khai, chỉ thêm migration mới.
-
-## Bảo mật
-
-- Mật khẩu băm bằng Argon2id. Session nằm trong cookie `HttpOnly`, `Secure`, `SameSite=Lax`, tiền tố `__Host-`, được xoay vòng khi đăng nhập và thu hồi khi đăng xuất hoặc đổi quyền.
-- Chống CSRF theo origin, CORS theo allowlist. Rate limit cho đăng nhập, đăng ký, đặt lại mật khẩu, MFA và báo giá công khai. Đăng ký và quên mật khẩu không tiết lộ email đã tồn tại hay chưa.
-- MFA bắt buộc với vai trò `admin` và `finance`, các vai trò khác bật tùy chọn. Secret TOTP được mã hóa khi lưu.
-- Request body được đọc theo allowlist, từ chối field lạ. SQL luôn tham số hóa. Lỗi trả về chỉ có mã ổn định và request ID, không lộ SQL hay stack trace.
-- Ảnh tải lên được giới hạn dung lượng, kiểm tra nội dung thật, đặt tên ngẫu nhiên và lưu ngoài web root.
-- Image không chứa cấu hình hay credential. Trong stack production, API và web chạy non-root; các container ứng dụng có root filesystem chỉ đọc và bỏ capability không cần thiết; database nằm trong mạng nội bộ không có cổng ra host.
-- Không commit secret. Cấu hình lấy từ biến môi trường; các file `.env*` (trừ `.env.example`) và `config/` được git bỏ qua. Mọi file mẫu chỉ chứa giá trị giả.
-
-Nếu phát hiện lỗ hổng, vui lòng báo riêng cho người duy trì thay vì mở issue công khai.
